@@ -15,7 +15,7 @@ import { query } from "@/db/client";
 import { encryptionConfigured } from "./crypto";
 import { listConnections, resolveConnection, PROVIDER_SPEC, type Provider } from "./connections";
 import { loadStandards } from "@/standards/registry";
-import { storage } from "./storage";
+import { storage, s3Config } from "./storage";
 
 export type CheckStatus = "ok" | "missing" | "failing" | "untested" | "optional";
 
@@ -105,10 +105,10 @@ export async function checkReadiness(): Promise<Readiness> {
     id: "storage", label: "File storage", status: "ok",
     why: "Holds your uploads so the worker can read them back.",
     detail: driver === "s3"
-      ? "Object storage (S3-compatible). Correct for web and worker on separate hosts."
-      : "Local disk. Correct only if the web app and worker share a volume — on Railway they cannot, so this needs S3_BUCKET.",
+      ? `Object storage: bucket "${s3Config().bucket}"${s3Config().endpoint ? ` at ${s3Config().endpoint}` : ""}. Correct for web and worker on separate services.`
+      : "Local disk. Correct only if the web app and worker share a volume — on Railway they cannot, so this needs a bucket.",
     fix: driver === "filesystem"
-      ? "On Railway, set S3_BUCKET and its keys. Railway cannot share a disk between two services."
+      ? "On Railway: add a Storage Bucket to the project and attach it to BOTH the web and worker services. Railway cannot share a disk between two services, so uploads would be invisible to the worker."
       : null,
     href: null,
     blocks: [],

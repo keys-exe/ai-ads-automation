@@ -137,27 +137,47 @@ let driver: StorageDriver | null = null;
 export function storage(): StorageDriver {
   if (driver) return driver;
 
-  const bucket = process.env.S3_BUCKET;
-  if (!bucket) {
+  const config = s3Config();
+  if (!config.bucket) {
     driver = new FilesystemDriver();
     return driver;
   }
 
   // Imported lazily so a filesystem deployment never loads the AWS SDK.
   const { S3Client } = require("@aws-sdk/client-s3") as typeof import("@aws-sdk/client-s3");
-  driver = new S3Driver(bucket, new S3Client({
-    region: process.env.S3_REGION ?? "auto",
-    // Set for R2, MinIO and Backblaze; omit for AWS.
-    endpoint: process.env.S3_ENDPOINT,
-    forcePathStyle: process.env.S3_FORCE_PATH_STYLE === "true",
-    credentials: process.env.S3_ACCESS_KEY_ID && process.env.S3_SECRET_ACCESS_KEY
-      ? {
-          accessKeyId: process.env.S3_ACCESS_KEY_ID,
-          secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
-        }
+  driver = new S3Driver(config.bucket, new S3Client({
+    region: config.region,
+    endpoint: config.endpoint,
+    forcePathStyle: config.forcePathStyle,
+    credentials: config.accessKeyId && config.secretAccessKey
+      ? { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey }
       : undefined, // fall back to the ambient credential chain
   }));
   return driver;
+}
+
+/**
+ * Read the bucket configuration, accepting two sets of names.
+ *
+ * `S3_*` is what this app documents. `AWS_*` is what Railway's Storage Bucket
+ * injects when you attach one, and it is the same set of values under
+ * different keys. Reading both means attaching a Railway bucket needs no
+ * variable mapping at all — which removes the most likely setup mistake,
+ * since a mismapped endpoint fails at the first upload rather than at deploy.
+ */
+export function s3Config() {
+  return {
+    bucket: process.env.S3_BUCKET ?? process.env.AWS_S3_BUCKET_NAME,
+    endpoint: process.env.S3_ENDPOINT ?? process.env.AWS_ENDPOINT_URL,
+    region: process.env.S3_REGION ?? process.env.AWS_DEFAULT_REGION ?? "auto",
+    accessKeyId: process.env.S3_ACCESS_KEY_ID ?? process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY ?? process.env.AWS_SECRET_ACCESS_KEY,
+    // Railway reports this as AWS_S3_URL_STYLE=path; most S3-compatible
+    // stores that are not AWS itself need path-style addressing.
+    forcePathStyle:
+      process.env.S3_FORCE_PATH_STYLE === "true" ||
+      process.env.AWS_S3_URL_STYLE === "path",
+  };
 }
 
 /** Test seam. */

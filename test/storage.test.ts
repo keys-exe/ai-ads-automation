@@ -81,3 +81,33 @@ test("a traversing filename cannot escape once stored", async () => {
 });
 
 process.on("exit", () => { void rm(root, { recursive: true, force: true }); });
+
+test("Railway's AWS_* bucket variables are accepted without remapping", async () => {
+  // Railway's Storage Bucket injects AWS_* names. Reading both sets means
+  // attaching one needs no variable mapping, which is the likeliest setup
+  // mistake — a mismapped endpoint fails at the first upload, not at deploy.
+  const saved = { ...process.env };
+  delete process.env.S3_BUCKET;
+  process.env.AWS_S3_BUCKET_NAME = "railway-bucket";
+  process.env.AWS_ENDPOINT_URL = "https://bucket.railway.app";
+  process.env.AWS_DEFAULT_REGION = "us-west-1";
+  process.env.AWS_S3_URL_STYLE = "path";
+
+  const { s3Config } = await import("../src/lib/storage");
+  const config = s3Config();
+  assert.equal(config.bucket, "railway-bucket");
+  assert.equal(config.endpoint, "https://bucket.railway.app");
+  assert.equal(config.region, "us-west-1");
+  assert.equal(config.forcePathStyle, true);
+
+  process.env = saved;
+});
+
+test("explicit S3_* names win over the AWS_* fallbacks", async () => {
+  const saved = { ...process.env };
+  process.env.S3_BUCKET = "explicit";
+  process.env.AWS_S3_BUCKET_NAME = "fallback";
+  const { s3Config } = await import("../src/lib/storage");
+  assert.equal(s3Config().bucket, "explicit");
+  process.env = saved;
+});

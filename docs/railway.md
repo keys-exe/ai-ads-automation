@@ -20,10 +20,12 @@ it is not planning to. The web service writes the upload bundle and the worker
 reads it back, so on Railway they cannot share a disk — storage has to be an
 object store.
 
-Cloudflare R2 is the natural pick: S3-compatible, cheap, no egress fees. AWS
-S3, Backblaze B2 and MinIO all work through the same driver.
+**Use Railway's own Storage Bucket.** It is S3-compatible and it injects its
+credentials as `AWS_*` variables, which this app reads directly — so attaching
+one needs no variable mapping at all. Cloudflare R2, AWS S3, Backblaze and
+MinIO all work too, through the `S3_*` names.
 
-Setting `S3_BUCKET` is what switches the app from the filesystem driver to the
+Attaching a bucket is what switches the app from the filesystem driver to the
 object store. Nothing else changes.
 
 ## Setup
@@ -39,9 +41,12 @@ schema alongside the application tables.
 
 ### 2. A bucket
 
-Create an R2 (or S3) bucket and an access key pair with read/write on it.
-Keep the account ID: R2's endpoint is
-`https://<account-id>.r2.cloudflarestorage.com`.
+**+ New → Bucket.** Then attach it to **both** the web and worker services so
+each gets the credentials. Nothing else to configure — the app reads the
+`AWS_*` variables Railway injects.
+
+If you would rather use Cloudflare R2 or AWS S3, set the `S3_*` variables
+instead; those take precedence.
 
 ### 3. Two services from this repo
 
@@ -69,12 +74,9 @@ DATABASE_URL=${{Postgres.DATABASE_URL}}
 #   openssl rand -base64 32
 SETTINGS_ENCRYPTION_KEY=<the same value on web and worker>
 
-# Storage. Required on Railway — see above.
-S3_BUCKET=<bucket name>
-S3_REGION=auto
-S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
-S3_ACCESS_KEY_ID=<key>
-S3_SECRET_ACCESS_KEY=<secret>
+# Storage: nothing to set if you attached a Railway Bucket — it injects its
+# own AWS_* variables and the app reads them. Only needed for R2 / AWS / MinIO:
+#   S3_BUCKET, S3_ENDPOINT, S3_REGION, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY
 ```
 
 Worker only:
