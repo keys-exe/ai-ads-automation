@@ -110,16 +110,37 @@ Second, **M1's alias failure reproduced independently.** A second
 again completed logging `nano_banana_2`. Two for two. This is no longer a
 one-off worth re-running — it is the behaviour of the route.
 
-**What is NOT settled here.** Whether the wordmark actually rendered legibly.
-The generated files sit behind a CDN this environment's egress policy blocks,
-and no Anthropic credential is configured here, so neither a direct look nor
-an automated vision check was possible. §42's rule applies: objective findings
-first, subjective read second, and say which is which. The model-verification
-result above is measured. The wordmark verdict is **outstanding and belongs to
-a human eye.**
+**The visual half, resolved by eye (20 Sep 2026).** Both frames were judged
+good and realistic: the `FLEXNOVA` wordmark rendered legibly and the §22A/§22T
+register held — it reads as a phone file, not as product photography. This
+half is a **visual check** under §45's distinction, not an instrument reading;
+it settles by looking, and someone looked.
 
-**So the wordmark route is unchanged for now.** §18A sets a two-part bar — the
-wordmark *and* the register — and only the half that does not need eyes has
-been cleared. What the model evidence does establish is that if the wordmark
-holds, Sunburst is the route with no verification cost, and `nano_banana_pro`
-is not usable here regardless of how its frame looks.
+That clears §18A's two-part bar for Sunburst on typed beats. **The route is
+promoted.**
+
+**What changed.** The three classes §18A puts on `nano_banana_pro` —
+`readable_wordmark`, `candid_face_seed`, `talking_head_seed` — now route to
+`gpt_image_2_5` Sunburst. This is a choice the standard already sanctions
+rather than a deviation: Part 3 lists each of them as
+*"`nano_banana_pro` · Sunburst"*, and §19's measured finding that Sunburst
+returns *"the best close-up texture of any generation in the pipeline"* is the
+supporting evidence for the two face classes.
+
+Nothing now routes to `nano_banana_pro`. `UNUSABLE_ON_THIS_CONNECTOR` names
+it, and a test asserts no default route lands on it, so the invariant is
+enforced rather than remembered.
+
+**One route that must not move.** §18A confines mechanism beats to
+*"`nano_banana_2` · `nano_banana_pro` only — classifier threshold"*, and §4 is
+explicit that OpenAI's classifiers are stricter than Nano Banana's. Sunburst
+scoring well on a typed product beat says nothing about an anatomy beat, so
+mechanism stays on `nano_banana_2` — the only remaining route — and §5's safe
+vocabulary stays mandatory there. A test asserts this too.
+
+**A side observation, n=1, unverified.** The control frame was judged good,
+and that frame was rendered by `nano_banana_2` rather than the
+`nano_banana_pro` requested. So `nano_banana_2` rendered an eight-character
+wordmark acceptably once. That is interesting against §18A's placement of it
+on *"volume B-roll, no type"*, but one frame is not a finding and nothing has
+been routed on it.

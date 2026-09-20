@@ -133,6 +133,27 @@ makes the server return an `unlim_choice` question and submit nothing.**
 and — on GPT Image — `variant: sunburst`, because the catalogue defaults are
 `low`, `1k` and the retired `flare`.
 
+### Model routing on this connector
+
+`nano_banana_pro` does not survive the connector: two submissions, different
+prompts, different batches, both completed logging `nano_banana_2`
+(`docs/measurements.md` M1, M4). §44.47 makes the logged model the evidence,
+so every route to it fails verification. Nothing is routed there, and a test
+enforces that rather than leaving it to a comment.
+
+`gpt_image_2_5` Sunburst verifies cleanly and cleared §18A's two-part bar on a
+side-by-side, so it takes the typed and face classes the standard already
+listed it against. Mechanism beats stay on Nano Banana regardless — §18A
+confines them by classifier threshold, not by output quality.
+
+| Beat class | Route |
+|---|---|
+| Avatar and recurring-subject sheets | `gpt_image_2_5` Sunburst |
+| Readable wordmark | `gpt_image_2_5` Sunburst |
+| Candid face seeds, talking-head seeds | `gpt_image_2_5` Sunburst |
+| Volume B-roll, property and location plates | `nano_banana_2` |
+| Mechanism A–C | `nano_banana_2` — classifier threshold, never GPT Image |
+
 The worker is a separate process because the instruments are minutes of work
 that no HTTP request should hold open. It is also the only container that needs
 ffmpeg, tesseract and Whisper — see `docker/worker.Dockerfile`.

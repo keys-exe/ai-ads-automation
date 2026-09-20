@@ -1,7 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { auditMaps } from "../src/processes/maps";
-import { buildImageCall, verifyLoggedModel, RetiredModelError, AliasMismatchError } from "../src/generation/arsenal";
+import {
+  buildImageCall, verifyLoggedModel, RetiredModelError, AliasMismatchError,
+  DEFAULT_ROUTES, UNUSABLE_ON_THIS_CONNECTOR,
+} from "../src/generation/arsenal";
 import type { MapsOutput } from "../src/processes/schemas-cast";
 
 const outfit = (base: string, lower = "jeans", foot = "trainers") => ({
@@ -183,4 +186,44 @@ test("a logged model that is not the one passed is an alias mismatch", () => {
   // §5's measured finding: twelve consecutive jobs ran on a different model.
   assert.throws(() => verifyLoggedModel("nano_banana_pro", "nano_banana_2"), AliasMismatchError);
   assert.doesNotThrow(() => verifyLoggedModel("nano_banana_pro", "nano_banana_pro"));
+});
+
+/* --- routing (docs/measurements.md M1, M4) ----------------------------- */
+
+test("no default route uses a model this connector cannot verify", () => {
+  // M1/M4: nano_banana_pro completed logging nano_banana_2 twice, on different
+  // prompts in different batches. Every route to it fails verifyLoggedModel.
+  for (const [beatClass, model] of Object.entries(DEFAULT_ROUTES)) {
+    assert.ok(
+      !UNUSABLE_ON_THIS_CONNECTOR.includes(model),
+      `${beatClass} routes to ${model}, which does not survive this connector`,
+    );
+  }
+});
+
+test("mechanism beats stay on Nano Banana — the classifier threshold is not a preference", () => {
+  // §18A: "Mechanism A–C: nano_banana_2 · nano_banana_pro only". §4: OpenAI's
+  // classifiers are stricter, so §5's safe vocabulary is mandatory rather than
+  // advisory on any anatomy beat routed there. GPT Image is not an option
+  // however well it scores on typed beats.
+  assert.notEqual(DEFAULT_ROUTES.mechanism, "gpt_image_2_5");
+  assert.ok(DEFAULT_ROUTES.mechanism.startsWith("nano_banana"));
+});
+
+test("typed and face classes route to the variant that verifies", () => {
+  // §18A Part 3 lists each of these as "nano_banana_pro · Sunburst"; M4
+  // cleared Sunburst on both halves of the bar.
+  for (const beatClass of ["readable_wordmark", "candid_face_seed", "talking_head_seed", "avatar_sheet"]) {
+    assert.equal(DEFAULT_ROUTES[beatClass], "gpt_image_2_5", `${beatClass} should route to Sunburst`);
+  }
+});
+
+test("a Sunburst route always carries the variant explicitly", () => {
+  // An omitted variant silently runs retired Flare (§18A rule 1).
+  for (const [beatClass, model] of Object.entries(DEFAULT_ROUTES)) {
+    const call = buildImageCall({ model, prompt: "x" });
+    if (model === "gpt_image_2_5") {
+      assert.equal(call.variant, "sunburst", `${beatClass} must pass variant`);
+    }
+  }
 });

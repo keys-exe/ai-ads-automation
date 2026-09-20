@@ -124,28 +124,66 @@ export class AliasMismatchError extends Error {
   }
 }
 
-/** §18A Part 3 — the Mode 1 default lock, used where step 2 left a class unrouted. */
+/**
+ * §18A Part 3 — the Mode 1 default lock, as routed on THIS connector.
+ *
+ * Two measured facts shape this table, both recorded in docs/measurements.md:
+ *
+ *   M1/M4 — `nano_banana_pro` does not survive the connector. Two submissions,
+ *   different prompts, different batches, both completed logging
+ *   `nano_banana_2`. §44.47 makes the logged model the evidence, so every
+ *   route to `nano_banana_pro` fails verifyLoggedModel, burns its
+ *   ALIAS_MISMATCH retry and queues for a human. It is unusable here, not
+ *   merely unreliable.
+ *
+ *   M4 — `gpt_image_2_5` Sunburst verifies cleanly (passed model is the logged
+ *   model, and the job's params confirm `sunburst`), and its side-by-side held
+ *   both halves of §18A's bar: the wordmark and the §22A/§22T register.
+ *
+ * So the three classes §18A puts on `nano_banana_pro` move to Sunburst. That
+ * is a choice the standard already sanctions rather than a deviation: Part 3
+ * lists every one of them as "`nano_banana_pro` · Sunburst", and §19 measured
+ * Sunburst as returning "the best close-up texture of any generation in the
+ * pipeline", which is the evidence that matters for the two face classes.
+ *
+ * The result is that NOTHING routes to `nano_banana_pro` here. That is a
+ * property of this connector, not of the model — see the note on mechanism
+ * beats below for the one place GPT Image must not go.
+ */
 export const DEFAULT_ROUTES: Record<string, ArsenalModel> = {
-  // "Routed — measured. Two sheets, two face types, identity and grid held,
-  // best close-up texture in the pipeline."
+  // §19, measured: identity and grid held across five panels, best close-up
+  // texture in the pipeline.
   avatar_sheet: "gpt_image_2_5",
-  readable_wordmark: "nano_banana_pro",
-  candid_face_seed: "nano_banana_pro",
-  talking_head_seed: "nano_banana_pro",
+
+  // M4: the side-by-side §18A asks for, both halves clear.
+  readable_wordmark: "gpt_image_2_5",
+
+  // §18A Part 3 lists both as "nano_banana_pro · Sunburst". Sunburst is the
+  // half of that pair which verifies here, and §19's measured close-up texture
+  // is the supporting evidence for a face class.
+  candid_face_seed: "gpt_image_2_5",
+  talking_head_seed: "gpt_image_2_5",
+
   volume_broll: "nano_banana_2",
-  // "Mechanism A–C: nano_banana_2 · nano_banana_pro only — classifier threshold."
+
+  // §18A: "Mechanism A–C: nano_banana_2 · nano_banana_pro only — classifier
+  // threshold." §4 is explicit that OpenAI's classifiers are stricter than
+  // Nano Banana's, so GPT Image is NOT an option here however well it scores
+  // elsewhere. With nano_banana_pro unusable on this connector, nano_banana_2
+  // is the only remaining route.
   mechanism: "nano_banana_2",
+
   // Plates carry no type and no face, so §18A's closest listed class is
-  // "Volume B-roll, no type → nano_banana_2" rather than any of the three
-  // classes it routes to nano_banana_pro (readable wordmark, candid face
-  // seeds, talking-head seeds).
-  //
-  // This also sidesteps §5's unresolved alias failure, reproduced on this
-  // pipeline's first real call: a job submitted as nano_banana_pro completed
-  // logging nano_banana_2 (job 4f176a90, 20 Sep 2026). Routing a plate to
-  // nano_banana_pro through the connector therefore fails verifyLoggedModel
-  // every time, burns its ALIAS_MISMATCH retry and queues for a human — for a
-  // beat class the standard never asked to be on pro.
+  // "Volume B-roll, no type" (see M1).
   property_plate: "nano_banana_2",
   location_plate: "nano_banana_2",
 };
+
+/**
+ * Guard against a route regressing onto the aliased model.
+ *
+ * Exported so a test can assert it rather than leaving the invariant to a
+ * comment. If the connector's routing is ever fixed, delete this and the
+ * measurement note together — not one without the other.
+ */
+export const UNUSABLE_ON_THIS_CONNECTOR: ArsenalModel[] = ["nano_banana_pro"];
