@@ -70,3 +70,56 @@ Caught while assembling M1's prompt. `PropertySheet.typeAndEra`'s schema
 description now states the constraint explicitly. The same class of error is
 worth checking on any slot whose surrounding locked text continues the noun
 phrase.
+
+---
+
+## M4 — Sunburst verifies clean; `nano_banana_pro` aliases again *(measured 20 Sep 2026)*
+
+§18A calls GPT Image 2.5 Sunburst a *"sanctioned challenger to
+`nano_banana_pro`"* on typed beats, and sets the bar: it becomes the default
+*"only when the first side-by-side holds both the wordmark **and** the
+§22A/§22T register."* This is that side-by-side — one prompt, two models,
+submitted in a single batch.
+
+**The beat.** A hero product beat on a real domestic surface (§15A), carrying
+a readable invented wordmark, `FLEXNOVA`, in flat white capitals. Assembled
+from the library: `CAM-LOCK` → product prose → `SURF-PATTERN` →
+`CAP-A` → `CAP-FILE` → `NEG-SURF` + `NEG-M1`. 3,482 characters minified.
+`REF-PROD` was deliberately left out — it opens *"exactly as in the attached
+reference image"* and no reference exists for a synthetic test.
+
+| | index 0 | index 1 |
+|---|---|---|
+| Passed | `gpt_image_2_5`, `variant: sunburst` | `nano_banana_pro` |
+| **Logged model** | **`gpt_image_2_5`** ✓ | **`nano_banana_2`** ✗ |
+| Logged `params.model` | **`sunburst`** ✓ | — |
+| Job | `4be05fec-a8a8-40ee-8c9f-b7ddf6731a09` | `73c958a3-7e1b-4aca-92ce-21ad923b81e8` |
+| Output | 1520×2688 | 1536×2752 |
+| Cost | 3 credits | 2 credits |
+
+**Two findings, both about routing rather than pixels.**
+
+First, **the GPT Image route verifies cleanly through this connector.** The
+passed model is the logged model, and the job's own params confirm
+`sunburst` — so §18A rule 1's trap (an omitted variant silently running
+retired Flare) is not firing when the variant is passed explicitly, and
+`verifyLoggedModel()` accepts the job.
+
+Second, **M1's alias failure reproduced independently.** A second
+`nano_banana_pro` submission, on a different prompt in a different batch,
+again completed logging `nano_banana_2`. Two for two. This is no longer a
+one-off worth re-running — it is the behaviour of the route.
+
+**What is NOT settled here.** Whether the wordmark actually rendered legibly.
+The generated files sit behind a CDN this environment's egress policy blocks,
+and no Anthropic credential is configured here, so neither a direct look nor
+an automated vision check was possible. §42's rule applies: objective findings
+first, subjective read second, and say which is which. The model-verification
+result above is measured. The wordmark verdict is **outstanding and belongs to
+a human eye.**
+
+**So the wordmark route is unchanged for now.** §18A sets a two-part bar — the
+wordmark *and* the register — and only the half that does not need eyes has
+been cleared. What the model evidence does establish is that if the wordmark
+holds, Sunburst is the route with no verification cost, and `nano_banana_pro`
+is not usable here regardless of how its frame looks.
