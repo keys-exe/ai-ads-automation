@@ -7,7 +7,26 @@ import PgBoss from "pg-boss";
  */
 export const QUEUE_ABSORB_INSPO = "absorb-inspo";
 export const QUEUE_ABSORB_SCRIPT = "absorb-script";
-export const QUEUES = [QUEUE_ABSORB_INSPO, QUEUE_ABSORB_SCRIPT] as const;
+export const QUEUE_CAST = "cast";
+export const QUEUE_LOCATIONS = "locations";
+export const QUEUE_MAPS = "maps";
+
+export const QUEUES = [
+  QUEUE_ABSORB_INSPO,
+  QUEUE_ABSORB_SCRIPT,
+  QUEUE_CAST,
+  QUEUE_LOCATIONS,
+  QUEUE_MAPS,
+] as const;
+
+/** Steps 3-5 chain automatically; this maps a step number to its queue. */
+export const QUEUE_BY_STEP: Record<number, string> = {
+  1: QUEUE_ABSORB_INSPO,
+  2: QUEUE_ABSORB_SCRIPT,
+  3: QUEUE_CAST,
+  4: QUEUE_LOCATIONS,
+  5: QUEUE_MAPS,
+};
 
 export interface AbsorbInspoJob {
   processId: number;
@@ -15,6 +34,12 @@ export interface AbsorbInspoJob {
 }
 
 export interface AbsorbScriptJob {
+  processId: number;
+  buildId: number;
+}
+
+/** Every step job carries the same shape. */
+export interface StepJob {
   processId: number;
   buildId: number;
 }
@@ -54,9 +79,9 @@ export async function getBoss(): Promise<PgBoss> {
 export async function enqueue(queue: string, data: object): Promise<string | null> {
   const boss = await getBoss();
   return boss.send(queue, data, {
-    // A failed measurement is usually a bad input rather than a flake, so
-    // retries are few and spaced: a three-minute ffmpeg run retried tightly
-    // just burns the worker.
+    // A failed step is usually a bad input rather than a flake, so retries are
+    // few and spaced: a three-minute ffmpeg run — or a batch of image
+    // generations — retried tightly just burns the worker and the credits.
     retryLimit: 2,
     retryDelay: 30,
     retryBackoff: true,

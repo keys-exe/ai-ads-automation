@@ -177,7 +177,7 @@ export function UploadPanel({
   );
 
   const run = useCallback(
-    async (step: 1 | 2) => {
+    async (step: 1 | 2 | 3 | 4 | 5) => {
       setError(null);
       const response = await fetch(`/api/builds/${buildId}/run`, {
         method: "POST",
@@ -222,20 +222,23 @@ export function UploadPanel({
       )}
 
       <section>
-        <h2 style={sectionHeading}>Processes</h2>
+        <h2 style={sectionHeading}>Build order</h2>
         <p style={{ fontSize: 13, color: "var(--text-secondary)", margin: "0 0 12px" }}>
-          §18 steps 1 and 2. Neither gates the other — the only gate in the build is step 6, the hooks.
+          §18 steps 1–5. None gates another — the only gate in the build is step 6, the hooks.
+          Steps 3, 4 and 5 chain: starting the cast runs the rest without another click.
         </p>
         <div style={{ display: "grid", gap: 10 }}>
           <ProcessButton
+            step={1}
             label="ABSORB INSPO VIDEO"
-            description="Runs the seven-part §42 protocol. Instruments first, then Parts 2–7."
+            description="§42's seven parts. Instruments run first, then the model reads what they measured."
             enabled={has("inspo_video")}
             disabledReason="Upload an inspo video first"
             process={stepProcess(1)}
             onRun={() => run(1)}
           />
           <ProcessButton
+            step={2}
             label={
               hasPlacement
                 ? "ABSORB THIS SCRIPT, PRODUCT, PRODUCT PLACEMENT AND PRODUCT SHEET"
@@ -250,6 +253,38 @@ export function UploadPanel({
             disabledReason="Upload a script and at least one product reference first"
             process={stepProcess(2)}
             onRun={() => run(2)}
+          />
+          <ProcessButton
+            step={3}
+            label="CAST — GENERATE REFERENCE SHEETS"
+            description="Everyone with two or more beats gets a §19 sheet. Panel-checked, locked, then step 4 starts itself."
+            enabled={Boolean(stepProcess(2)?.status === "done")}
+            disabledReason="Run step 2 first — casting reads its phrase inventory"
+            process={stepProcess(3)}
+            onRun={() => run(3)}
+            chainsTo="starts steps 4 and 5"
+            spendsCredits
+          />
+          <ProcessButton
+            step={4}
+            label="PROPERTY AND LOCATION MAPS"
+            description="C0 first, then the eight-channel pass. Property plate is generated and checked before any room is built against it."
+            enabled={Boolean(stepProcess(3)?.status === "done")}
+            disabledReason="Starts automatically when the cast locks"
+            process={stepProcess(4)}
+            onRun={() => run(4)}
+            automatic
+            spendsCredits
+          />
+          <ProcessButton
+            step={5}
+            label="ACT MAP AND WARDROBE MAP"
+            description="Story-day derivation, the wardrobe ledger with its four audits, the act map, and the coverage ledger. No generation."
+            enabled={Boolean(stepProcess(4)?.status === "done")}
+            disabledReason="Starts automatically when the locations close"
+            process={stepProcess(5)}
+            onRun={() => run(5)}
+            automatic
           />
         </div>
       </section>
@@ -369,19 +404,29 @@ function UploadBox({
 }
 
 function ProcessButton({
+  step,
   label,
   description,
   enabled,
   disabledReason,
   process,
   onRun,
+  chainsTo,
+  automatic,
+  spendsCredits,
 }: {
+  step: number;
   label: string;
   description: string;
   enabled: boolean;
   disabledReason: string;
   process?: ProcessSummary;
   onRun: () => void;
+  /** Named where finishing this step starts others. */
+  chainsTo?: string;
+  /** True where the step normally starts itself; Run stays available as a re-run. */
+  automatic?: boolean;
+  spendsCredits?: boolean;
 }) {
   const running = process?.status === "queued" || process?.status === "running";
 
@@ -389,15 +434,25 @@ function ProcessButton({
     <div className="card">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontFamily: "var(--font-mono)", fontSize: 13.5, letterSpacing: "0.01em" }}>{label}</div>
+          <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
+              step {step}
+            </span>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: 13.5, letterSpacing: "0.01em" }}>{label}</span>
+          </div>
           <p style={{ fontSize: 12.5, color: "var(--text-secondary)", margin: "6px 0 0" }}>{description}</p>
+          <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+            {chainsTo && <span className="badge" data-tone="accent">{chainsTo}</span>}
+            {automatic && <span className="badge">starts automatically</span>}
+            {spendsCredits && <span className="badge" data-tone="warn">spends credits</span>}
+          </div>
         </div>
         <button onClick={onRun} disabled={!enabled || running} style={enabled && !running ? primaryButton : disabledButton}>
-          {running ? "Running…" : "Run"}
+          {running ? "Running…" : automatic ? "Re-run" : "Run"}
         </button>
       </div>
 
-      {!enabled && (
+      {!enabled && !process && (
         <p className="badge" data-tone="warn" style={{ marginTop: 10, display: "inline-block" }}>{disabledReason}</p>
       )}
 

@@ -23,6 +23,9 @@ const TITLES: Record<string, string> = {
   measurements: "Part 1 — measured",
   absorption_sheet: "Absorption Sheet",
   script_absorption: "Step 2 — locks, inventory, claims",
+  cast: "Step 3 — cast and reference sheets",
+  locations: "Step 4 — property and locations",
+  maps: "Step 5 — act map and wardrobe map",
 };
 
 export function ArtifactList({ artifacts }: { artifacts: Artifact[] }) {
@@ -144,6 +147,48 @@ function deriveMetrics(artifact: Artifact): Array<{ label: string; value: string
       { label: "model routes", value: num(p["modelRoutes"]) },
       { label: "locks", value: num(p["locks"]) },
       { label: "collisions", value: num(p["collisions"]) },
+    ];
+  }
+
+  if (artifact.kind === "cast") {
+    const cast = (p["cast"] ?? []) as Array<{ speaks?: boolean; clearance?: Array<{ passes?: boolean }> }>;
+    const speaking = cast.filter((c) => c.speaks).length;
+    // §19A's gate is five of eight against every roster entry, proven.
+    const cleared = cast.filter((c) => (c.clearance ?? []).every((x) => x.passes)).length;
+    return [
+      { label: "sheeted cast", value: num(cast) },
+      { label: "speaking", value: String(speaking) },
+      { label: "silent recurrers", value: String(cast.length - speaking) },
+      { label: "axis-cleared", value: `${cleared}/${cast.length}` },
+      { label: "one-off subjects", value: num(p["oneOffSubjects"]) },
+    ];
+  }
+
+  if (artifact.kind === "locations") {
+    const locations = (p["locations"] ?? []) as Array<{ tier?: string }>;
+    const tier = (t: string) => locations.filter((l) => l.tier === t).length;
+    return [
+      { label: "locations", value: num(locations) },
+      { label: "PLATED", value: String(tier("PLATED")) },
+      { label: "INCIDENTAL", value: String(tier("INCIDENTAL")) },
+      { label: "TRAVERSED", value: String(tier("TRAVERSED")) },
+      { label: "dwellings", value: num(p["properties"]) },
+    ];
+  }
+
+  if (artifact.kind === "maps") {
+    const coverage = p["coverage"] as { uncovered?: number; blocked?: number; phraseCount?: number } | undefined;
+    const audits = (p["independentAudits"] ?? []) as Array<{ pass?: boolean; disagreesWithModel?: boolean }>;
+    const failing = audits.filter((a) => !a.pass).length;
+    const disputed = audits.filter((a) => a.disagreesWithModel).length;
+    return [
+      { label: "beats", value: num(p["actMap"]) },
+      { label: "story days", value: num(p["storyDays"]) },
+      { label: "capture events", value: num(p["captureEvents"]) },
+      { label: "uncovered", value: num(coverage?.uncovered) },
+      { label: "blocked", value: num(coverage?.blocked) },
+      { label: "audits failing", value: String(failing) },
+      { label: "recount disputes", value: String(disputed) },
     ];
   }
 

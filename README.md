@@ -2,10 +2,8 @@
 
 An executable implementation of the **Global Standards V7.51.3** build order.
 
-This is step 1 and step 2 of the §18 eight-step flow: absorb the reference
-video, then absorb the script, product, Product Sheet and — where one exists —
-the product placement reference. The bundle is uploaded once and both steps
-read from it.
+Steps 1–5 of the §18 eight-step flow. The bundle is uploaded once; every step
+reads from it.
 
 ## What runs
 
@@ -13,6 +11,67 @@ read from it.
 |---|---|---|
 | 1 | `ABSORB INSPO VIDEO` | The Absorption Sheet — §42's seven parts |
 | 2 | `ABSORB THIS SCRIPT, PRODUCT[, PRODUCT PLACEMENT] AND PRODUCT SHEET` | §27B phrase inventory, §43A claims pass, §18A Mode & Model Lock, the remaining step-2 locks |
+| 3 | `CAST — GENERATE REFERENCE SHEETS` | §19 sheets for everyone with 2+ beats, §19A axis tables, §22D voices, §20 constraint sheets |
+| 4 | *(automatic)* | Property Sheet + plate, the eight-channel location pass, five-part Location Sheets, scene plates |
+| 5 | *(automatic)* | Story days, the wardrobe ledger with its four audits, the act map, the coverage ledger |
+
+## The chain
+
+Steps 3, 4 and 5 run as one pass. §18: *"Steps 3, 4 and 5 send their artefact
+and continue in the same pass — a handoff, not an approval. The only gate in
+the build is step 6."* Starting the cast runs the rest without another click.
+
+```
+step 3  cast ──▶ sheets generated ──▶ §19 panel check ──▶ locked
+                                                            │
+step 4  ◀───────────────────────────────────────────────────┘
+        property sheet ──▶ property plate ──▶ §30G check ──▶ locked
+                                                   │
+                                     location plates (PLATED only),
+                                     property plate attached to each
+                                                   │
+step 5  ◀──────────────────────────────────────────┘
+        story days ──▶ wardrobe ledger ──▶ act map ──▶ coverage ledger
+```
+
+The property plate is a hard internal gate. §30G: *"generated and checked
+first, before any location plate is built against it."* A room whose dwelling's
+plate failed is **held**, not generated against nothing — that is the "six
+houses" failure the section exists to prevent, and it would be invisible in the
+output.
+
+Step 3 is the first step that spends credits, which is why it is the one a
+person starts rather than firing off step 2.
+
+## Who checks the visual gates
+
+E1 marks §19's panel check and §30G's plate check **HUMAN**. Running them
+automatically is a deliberate deviation, taken so the chain completes
+unattended, and it is bounded:
+
+- An automatic **fail** is authoritative — it triggers a reroll inside E2's
+  two-attempt budget, which beats shipping a bad sheet.
+- An automatic **pass** is not. The artefact locks so the chain proceeds, and
+  `humanReviewPending` stays true. Nothing is ever recorded as human-checked
+  when it was not.
+
+## Prompt assembly
+
+The model never writes a prompt. Appendix A strings are NORMATIVE — *"copy this
+verbatim or with only the named substitutions"* — and several name the exact
+sentence that must survive trimming. A model asked to write the prompt
+paraphrases them, and every paraphrase is a silent trim of a tested string.
+
+So the model supplies only the **fills**, and `src/generation/assemble.ts`
+pastes the locked blocks around them in the assembly order the section states.
+`assembleAvatarSheet` and the two plate assemblers are tested against the
+document's own never-trimmed clauses.
+
+One wrinkle worth knowing: the same slot is spelled four different ways across
+the library — `[SKIRTING]` in `PLATE-PROP`, `[SKIRTING — profile, height,
+colour]` in `PROP-SHELL`, `[RADIATOR]` against `[RADIATOR TYPE]`. E5 treats
+those as one slot with one source, so the matcher resolves exact → head term →
+word prefix rather than making callers reproduce every spelling.
 
 The step-2 label carries its `PRODUCT PLACEMENT` clause only when a placement
 reference is in the bundle. That is not a UI detail: with no worn-placement
@@ -48,10 +107,31 @@ claim sitting beside a measured one.
 ```
 Next.js (web)  ──enqueue──▶  pg-boss (Postgres)  ──▶  worker
       │                                                  │
-      │                                        instruments (ffmpeg/tesseract/whisper)
+      │                                   instruments (ffmpeg/tesseract/whisper)
+      │                                   Claude API (claude-opus-5)
+      │                                   Higgsfield MCP (image generation)
       │                                                  │
-      └──────────── Postgres ◀── artefacts ◀── Claude API (claude-opus-5)
+      └──────────── Postgres ◀── artefacts ◀─────────────┘
 ```
+
+### Three constraints the MCP schemas carry that E7's templates do not
+
+E7 records the call templates but not the tool limits. Each of these breaks a
+naive implementation:
+
+1. **`generate_image_batch` takes at most 12 requests.** A build with twenty
+   locations is several batches, and indices must stay stable across them or
+   the manifest stops matching the payload (§16B).
+2. **`jobs_wait` takes at most 12 jobs and long-polls for at most 15 seconds.**
+   E7's *"jobs_wait on every T2I before its I2V"* is a poll loop, not one call.
+3. **`medias[].value` must be a media UUID or a prior job_id** — an https URL
+   is rejected.
+
+A fourth is worse than an error because it is silent: **omitting `use_unlim`
+makes the server return an `unlim_choice` question and submit nothing.**
+`buildImageCall` always sets it explicitly, along with `quality`, `resolution`
+and — on GPT Image — `variant: sunburst`, because the catalogue defaults are
+`low`, `1k` and the retired `flare`.
 
 The worker is a separate process because the instruments are minutes of work
 that no HTTP request should hold open. It is also the only container that needs
@@ -111,12 +191,10 @@ falling back to an estimate.
 
 ## What is not here yet
 
-Steps 3–8. Cast and reference sheets (§19), property and location maps (§30C,
-§30G), the act map and wardrobe map (§14A), the hooks gate, B-roll and body
-acts, and the CapCut block. Those are where generation starts, and where the
-Higgsfield/Kling MCP connectors enter against E7's verified call templates.
-Steps 1 and 2 need no generation at all.
+Steps 6–8: the hooks gate (the build's only real gate), B-roll and body acts,
+and the CapCut block. Those are the steps that deliver beat prompts, so they
+are also where the §16A prompt-widget carousel and the I2V routing to Kling,
+Wan and Seedance arrive.
 
 The §16A delivery surface is present as tokens, the highlight-by-rule pass and
-a Navigator; the prompt-widget carousel arrives with step 6, which is the first
-step that delivers prompts.
+a Navigator.
