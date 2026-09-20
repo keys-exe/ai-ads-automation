@@ -61,7 +61,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
 
   const data = Buffer.from(await file.arrayBuffer());
-  const stored = await storeUpload(buildId, kind, file.name, data);
+  const stored = await storeUpload(buildId, kind, file.name, data, file.type || undefined);
 
   if (SINGLE.includes(kind)) {
     await query(`DELETE FROM assets WHERE build_id = $1 AND kind = $2`, [buildId, kind]);

@@ -7,9 +7,8 @@
  * and so the UI's progress column has a single writer.
  */
 
-import { readFile } from "node:fs/promises";
 import { one, query, transaction } from "@/db/client";
-import { resolveStoragePath } from "@/lib/storage";
+import { materialiseAsset, readAsset } from "@/lib/storage";
 import { absorbInspoVideo } from "./absorb-inspo";
 import { absorbScript } from "./absorb-script";
 import { part1Table } from "@/instruments";
@@ -90,10 +89,19 @@ export async function runAbsorbInspo(processId: number): Promise<void> {
     const video = assets.find((a) => a.kind === "inspo_video");
     if (!video) throw new Error("No inspo video in this build's bundle.");
 
-    const result = await absorbInspoVideo({
-      videoPath: resolveStoragePath(video.storage_path),
-      onStage: (stage) => void setStage(processId, stage),
-    });
+    // The instruments take a file path, so the asset is materialised — free
+    // on the filesystem driver, a temp download on S3. Cleanup is in a finally
+    // because a skipped one fills the worker's disk a job at a time.
+    const source = await materialiseAsset(video.storage_path);
+    let result;
+    try {
+      result = await absorbInspoVideo({
+        videoPath: source.path,
+        onStage: (stage) => void setStage(processId, stage),
+      });
+    } finally {
+      await source.cleanup();
+    }
 
     await transaction(async (client) => {
       await client.query(
@@ -128,17 +136,17 @@ export async function runAbsorbScript(processId: number): Promise<void> {
     const script = assets.find((a) => a.kind === "script");
     if (!script) throw new Error("No script in this build's bundle.");
     const scriptText = script.text_content
-      ?? (await readFile(resolveStoragePath(script.storage_path), "utf8"));
+      ?? (await readAsset(script.storage_path)).toString("utf8");
 
     const sheetAsset = assets.find((a) => a.kind === "product_sheet");
     const productSheetText = sheetAsset
-      ? sheetAsset.text_content ?? (await readFile(resolveStoragePath(sheetAsset.storage_path), "utf8"))
+      ? sheetAsset.text_content ?? (await readAsset(sheetAsset.storage_path)).toString("utf8")
       : null;
 
     const toImage = async (a: AssetRow) => ({
       filename: a.filename,
       mediaType: a.mime_type,
-      base64: (await readFile(resolveStoragePath(a.storage_path))).toString("base64"),
+      base64: (await readAsset(a.storage_path)).toString("base64"),
     });
 
     const productImages = await Promise.all(assets.filter((a) => a.kind === "product").map(toImage));

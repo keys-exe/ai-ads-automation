@@ -13,11 +13,13 @@
  * and Avatar V needs their video, so one generation serves both.
  */
 
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { one, query } from "@/db/client";
 import { requireConnection } from "@/lib/connections";
-import { buildDir, resolveStoragePath } from "@/lib/storage";
+import { buildDir, materialiseAsset, readAsset, writeAsset } from "@/lib/storage";
 import { extractAudio } from "@/instruments/extract";
 import { scoreTake, rankTakes, type TakeScore } from "@/instruments/take-score";
 import { cleanScript } from "./clean-script";
@@ -75,13 +77,25 @@ export async function runVoicePhase(runId: number): Promise<void> {
 
     for (const clip of clips) {
       if (clip.audio_path) continue;
-      const outputPath = join(buildDir(run.build_id), "voice", `clip-${clip.ordinal}.mp3`);
-      const extracted = await extractAudio(resolveStoragePath(clip.video_path), outputPath);
-      await query(
-        `UPDATE source_clips SET audio_path = $2, duration_s = $3, status = 'ready' WHERE id = $1`,
-        [clip.id, outputPath, extracted.durationSeconds],
-      );
-      clip.audio_path = outputPath;
+
+      const source = await materialiseAsset(clip.video_path);
+      const key = `${buildDir(run.build_id)}/voice/clip-${clip.ordinal}.mp3`;
+      try {
+        // ffmpeg writes to a local path; the result is then stored through the
+        // driver so the key works on either backend.
+        const localOut = join(tmpdir(), `extract-${randomUUID().slice(0, 8)}.mp3`);
+        const extracted = await extractAudio(source.path, localOut);
+        await writeAsset(key, await readFile(localOut), "audio/mpeg");
+        await rm(localOut, { force: true });
+
+        await query(
+          `UPDATE source_clips SET audio_path = $2, duration_s = $3, status = 'ready' WHERE id = $1`,
+          [clip.id, key, extracted.durationSeconds],
+        );
+        clip.audio_path = key;
+      } finally {
+        await source.cleanup();
+      }
     }
 
     // --- Clone the voice from those tracks.
@@ -89,7 +103,7 @@ export async function runVoicePhase(runId: number): Promise<void> {
     const samples = await Promise.all(
       clips.map(async (clip) => ({
         filename: `clip-${clip.ordinal}.mp3`,
-        data: await readFile(clip.audio_path!),
+        data: await readAsset(clip.audio_path!),
       })),
     );
 
@@ -113,7 +127,7 @@ export async function runVoicePhase(runId: number): Promise<void> {
     if (!scriptAsset) throw new Error("No script in this build's bundle.");
 
     const rawScript = scriptAsset.text_content
-      ?? (await readFile(resolveStoragePath(scriptAsset.storage_path), "utf8"));
+      ?? (await readAsset(scriptAsset.storage_path)).toString("utf8");
 
     const spoken = await cleanScript(rawScript, (s) => void setStage(runId, s));
 
@@ -136,19 +150,24 @@ export async function runVoicePhase(runId: number): Promise<void> {
         seed: 1000 + i,
       });
 
-      const audioPath = join(buildDir(run.build_id), "voice", `take-${i + 1}.mp3`);
-      const { writeFile, mkdir } = await import("node:fs/promises");
-      const { dirname } = await import("node:path");
-      await mkdir(dirname(audioPath), { recursive: true });
-      await writeFile(audioPath, audio);
+      const key = `${buildDir(run.build_id)}/voice/take-${i + 1}.mp3`;
+      await writeAsset(key, audio, "audio/mpeg");
 
-      const score = await scoreTake(audioPath, countWords(spoken.text));
+      // Scoring runs ffmpeg, so the take needs a path even though we just had
+      // the bytes in hand.
+      const local = await materialiseAsset(key);
+      let score;
+      try {
+        score = await scoreTake(local.path, countWords(spoken.text));
+      } finally {
+        await local.cleanup();
+      }
       scored.push({ ordinal: i + 1, score });
 
       await query(
         `INSERT INTO tts_takes (run_id, ordinal, model, audio_path, duration_s, scores, status)
          VALUES ($1,$2,$3,$4,$5,$6::jsonb,'ready')`,
-        [runId, i + 1, ELEVEN_V3, audioPath, score.durationSeconds, JSON.stringify(score)],
+        [runId, i + 1, ELEVEN_V3, key, score.durationSeconds, JSON.stringify(score)],
       );
     }
 
@@ -218,9 +237,9 @@ export async function runAvatarPhase(runId: number): Promise<void> {
     if (!identityClip) throw new Error("No source clip to learn the avatar identity from.");
 
     const identityAsset = await uploadAsset(
-      apiKey, await readFile(resolveStoragePath(identityClip.video_path)), "video/mp4",
+      apiKey, await readAsset(identityClip.video_path), "video/mp4",
     );
-    const audioAsset = await uploadAsset(apiKey, await readFile(take.audio_path), "audio/mpeg");
+    const audioAsset = await uploadAsset(apiKey, await readAsset(take.audio_path), "audio/mpeg");
 
     // --- Render each part.
     await setStage(runId, "rendering");

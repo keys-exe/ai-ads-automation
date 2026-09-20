@@ -4,6 +4,42 @@ Three processes and a database: Postgres, the web app, and the worker. The
 compose file brings all of it up; nothing here is host-specific, so it runs on
 a plain VM and is the base for Fly, Render or Railway.
 
+## Vercel will not run this
+
+Worth stating plainly, because the repo is a Next.js app and Vercel is the
+reflex. It can host the web half and nothing else:
+
+| Needs | Vercel |
+|---|---|
+| A long-lived worker polling pg-boss, running jobs for minutes | No — functions are per-request |
+| A persistent filesystem shared with the web process | No — ephemeral `/tmp` only |
+| ffmpeg, tesseract, Whisper | No system binaries |
+| Minutes-long execution | Function timeouts |
+
+A Vercel deployment therefore produces a **working UI where nothing ever
+runs** — every step sits at `queued` forever. That is worse than a failed
+build, because it looks like it succeeded.
+
+If you want to keep Vercel for the web app, that is a legitimate split, but
+be clear about the cost: the worker still needs a container host somewhere,
+**and** storage has to move to S3 (below) because the two halves no longer
+share a disk. Keeping Vercel adds a host; it does not remove one.
+
+## Storage: volume or object store
+
+| Deployment | Driver | Configure |
+|---|---|---|
+| One host, web + worker together | filesystem | `STORAGE_ROOT` (default) |
+| Split across hosts | S3-compatible | `S3_BUCKET` and friends |
+
+Setting `S3_BUCKET` switches the driver. Everything else is unchanged —
+uploads, instruments and provider calls go through the same interface either
+way. Works with AWS, Cloudflare R2, Backblaze B2 and MinIO.
+
+The one thing to know: ffmpeg, tesseract and Whisper take a file path, not
+bytes. On the S3 driver an asset is downloaded to a temp file before any
+instrument touches it, and the pipeline cleans those up in a `finally`.
+
 ## Quick start
 
 ```bash
