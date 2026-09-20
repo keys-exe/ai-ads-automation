@@ -191,10 +191,19 @@ export interface ResolvedConnection {
  * this file on why that order and not the reverse.
  */
 export async function resolveConnection(provider: Provider): Promise<ResolvedConnection | null> {
-  const row = await one<ConnectionRow>(
-    `SELECT * FROM connections WHERE provider = $1 AND is_active LIMIT 1`,
-    [provider],
-  );
+  // A stored connection needs the database; an environment variable does not.
+  // So a database failure falls through to env rather than throwing — the
+  // unreachable database is reported by its own readiness check, and there is
+  // no reason for it to also hide a perfectly good env var.
+  let row: ConnectionRow | undefined;
+  try {
+    row = await one<ConnectionRow>(
+      `SELECT * FROM connections WHERE provider = $1 AND is_active LIMIT 1`,
+      [provider],
+    );
+  } catch {
+    return resolveFromEnv(provider);
+  }
 
   if (row?.secret_cipher && row.secret_iv && row.secret_tag) {
     const sealed: SealedSecret = { cipher: row.secret_cipher, iv: row.secret_iv, tag: row.secret_tag };

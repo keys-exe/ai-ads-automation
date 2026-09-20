@@ -13,7 +13,7 @@
 
 import { query } from "@/db/client";
 import { encryptionConfigured } from "./crypto";
-import { listConnections, PROVIDER_SPEC, type Provider } from "./connections";
+import { listConnections, resolveConnection, PROVIDER_SPEC, type Provider } from "./connections";
 import { loadStandards } from "@/standards/registry";
 import { storage } from "./storage";
 
@@ -137,24 +137,35 @@ export async function checkReadiness(): Promise<Readiness> {
 
   for (const provider of Object.keys(PROVIDER_SPEC) as Provider[]) {
     const spec = PROVIDER_SPEC[provider];
-    const active = connections.find((c) => c.provider === provider && c.isActive);
+    const stored = connections.find((c) => c.provider === provider && c.isActive);
     const required = PROVIDER_REQUIRED[provider];
+
+    // A provider can be configured two ways, and both work. Looking only at
+    // the database was a bug: a key set as an environment variable is used by
+    // the pipeline but showed here as "missing", telling someone who had done
+    // the right thing that they had not.
+    const resolved = await resolveConnection(provider).catch(() => null);
 
     let status: CheckStatus;
     let detail: string;
     let fix: string | null = null;
 
-    if (!active) {
+    if (!resolved) {
       status = required ? "missing" : "optional";
       detail = required ? "Not connected." : "Not connected. Only needed for the parts listed below.";
-      fix = `Open Settings and connect ${spec.label}.`;
-    } else if (active.testStatus === "ok") {
+      fix = `Connect ${spec.label} in Settings, or set ${spec.envFallback[0]} on both the web and worker services.`;
+    } else if (resolved.source === "env") {
+      // Env-configured providers carry no test record, because there is no row
+      // to record one against. Saying so is better than implying it passed.
       status = "ok";
-      detail = active.testDetail ?? "Connected and tested.";
-    } else if (active.testStatus === "failed") {
+      detail = `Configured by environment variable. Set it on BOTH the web and worker services — the worker is what runs the steps.`;
+    } else if (stored?.testStatus === "ok") {
+      status = "ok";
+      detail = stored.testDetail ?? "Connected and tested.";
+    } else if (stored?.testStatus === "failed") {
       status = "failing";
-      detail = active.testDetail ?? "The last test failed.";
-      fix = `The key is saved but the test failed. Check the key in Settings — the message above says why.`;
+      detail = stored.testDetail ?? "The last test failed.";
+      fix = "The key is saved but the test failed. The message above says why — check the key in Settings.";
     } else {
       status = "untested";
       detail = "Saved, but never tested. Press Test in Settings to confirm it works.";
