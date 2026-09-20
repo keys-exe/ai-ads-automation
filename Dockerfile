@@ -22,6 +22,20 @@ COPY . .
 RUN npm run standards:lint || echo "doc-lint reported findings; see docs/doc-lint-findings.md"
 RUN npx next build
 
+# --- migrate ----------------------------------------------------------
+# Migrations ran from the worker image, which meant nothing in the stack could
+# start until a 3-4GB image carrying ffmpeg and Whisper had finished building.
+# They need Node, pg and the SQL — so they get their own small target that
+# reuses the deps layer.
+FROM node:22-bookworm-slim AS migrate
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json tsconfig.json ./
+COPY scripts ./scripts
+COPY src ./src
+CMD ["npx", "tsx", "scripts/migrate.ts"]
+
 # --- runtime ----------------------------------------------------------
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app

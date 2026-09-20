@@ -37,7 +37,11 @@ COPY . .
 # so a first run is not a silent ten-minute model fetch.
 ARG WHISPER_MODEL=small
 ENV WHISPER_MODEL=${WHISPER_MODEL}
-RUN python3 -c "import whisper; whisper.load_model('${WHISPER_MODEL}')" || true
+# Use the VENV's python, not the system one: whisper is installed in
+# /opt/whisper and `python3 -c "import whisper"` would always fail. It was
+# masked by a `|| true`, so the build passed and the weights were never
+# fetched — leaving the first transcription to download them mid-job.
+RUN /opt/whisper/bin/python -c "import whisper; whisper.load_model('${WHISPER_MODEL}')"
 
 ENV NODE_ENV=production
 ENV STORAGE_ROOT=/app/storage

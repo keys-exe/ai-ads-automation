@@ -9,7 +9,9 @@
 #
 #   2. Migrations run as a one-shot service that both others wait on, rather
 #      than in an entrypoint. Two replicas racing the same CREATE TABLE is a
-#      confusing first failure on a fresh deployment.
+#      confusing first failure on a fresh deployment. It builds from its own
+#      small target rather than the worker image, so nothing waits on ffmpeg
+#      and Whisper just to create tables.
 
 name: ai-ads-pipeline
 
@@ -36,8 +38,8 @@ services:
   migrate:
     build:
       context: .
-      dockerfile: docker/worker.Dockerfile
-    command: ["npx", "tsx", "scripts/migrate.ts"]
+      dockerfile: Dockerfile
+      target: migrate
     environment:
       DATABASE_URL: &database_url postgres://${POSTGRES_USER:-ads}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ai_ads}
     depends_on:
