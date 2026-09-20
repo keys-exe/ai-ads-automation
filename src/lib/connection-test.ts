@@ -29,6 +29,10 @@ export async function testConnection(connection: ResolvedConnection): Promise<Te
       case "higgsfield":
       case "kling":
         return await testMcpOrApi(connection);
+      case "elevenlabs":
+        return await testElevenLabs(connection);
+      case "heygen":
+        return await testHeyGen(connection);
       default:
         return { ok: false, detail: `No test defined for ${connection.provider}.` };
     }
@@ -119,6 +123,25 @@ async function testMcpOrApi(connection: ResolvedConnection): Promise<TestResult>
   } finally {
     await client.close().catch(() => {});
   }
+}
+
+/**
+ * Lists the account's voices. Read-only and free, and it exercises exactly the
+ * auth header the clone and synthesis calls use.
+ */
+async function testElevenLabs(connection: ResolvedConnection): Promise<TestResult> {
+  if (!("apiKey" in connection.secret)) return { ok: false, detail: "No API key stored." };
+  const { listVoices } = await import("@/providers/elevenlabs");
+  const voices = await listVoices(connection.secret.apiKey);
+  return { ok: true, detail: `Authenticated. ${voices.length} voice(s) on the account.` };
+}
+
+/** Reads the remaining quota — read-only, and it surfaces credit headroom. */
+async function testHeyGen(connection: ResolvedConnection): Promise<TestResult> {
+  if (!("apiKey" in connection.secret)) return { ok: false, detail: "No API key stored." };
+  const { getQuota } = await import("@/providers/heygen");
+  const quota = await getQuota(connection.secret.apiKey);
+  return { ok: true, detail: `Authenticated. Quota: ${JSON.stringify(quota).slice(0, 160)}` };
 }
 
 /** Record a test result against the stored connection so Settings shows live state. */

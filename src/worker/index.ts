@@ -9,10 +9,12 @@
 import {
   getBoss,
   QUEUE_ABSORB_INSPO, QUEUE_ABSORB_SCRIPT, QUEUE_CAST, QUEUE_LOCATIONS, QUEUE_MAPS,
+  QUEUE_VOICE, QUEUE_AVATAR,
   type StepJob,
 } from "./queue";
 import { runAbsorbInspo, runAbsorbScript } from "../processes/runner";
 import { runCast, runLocations, runMaps } from "../processes/chain";
+import { runVoicePhase, runAvatarPhase } from "../processes/voice/run";
 
 const boss = await getBoss();
 
@@ -27,6 +29,10 @@ const HANDLERS: Array<[string, (processId: number) => Promise<void>]> = [
   [QUEUE_CAST, runCast],
   [QUEUE_LOCATIONS, runLocations],
   [QUEUE_MAPS, runMaps],
+  // The voice route. Two queues rather than one because take selection is a
+  // human gate between them.
+  [QUEUE_VOICE, runVoicePhase],
+  [QUEUE_AVATAR, runAvatarPhase],
 ];
 
 for (const [queue, handler] of HANDLERS) {

@@ -10,6 +10,8 @@ export const QUEUE_ABSORB_SCRIPT = "absorb-script";
 export const QUEUE_CAST = "cast";
 export const QUEUE_LOCATIONS = "locations";
 export const QUEUE_MAPS = "maps";
+export const QUEUE_VOICE = "voice";
+export const QUEUE_AVATAR = "avatar";
 
 export const QUEUES = [
   QUEUE_ABSORB_INSPO,
@@ -17,6 +19,8 @@ export const QUEUES = [
   QUEUE_CAST,
   QUEUE_LOCATIONS,
   QUEUE_MAPS,
+  QUEUE_VOICE,
+  QUEUE_AVATAR,
 ] as const;
 
 /** Steps 3-5 chain automatically; this maps a step number to its queue. */

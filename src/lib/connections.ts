@@ -14,7 +14,7 @@
 import { one, query } from "@/db/client";
 import { seal, open, hint, encryptionConfigured, type SealedSecret } from "./crypto";
 
-export const PROVIDERS = ["anthropic", "higgsfield", "kling"] as const;
+export const PROVIDERS = ["anthropic", "higgsfield", "kling", "elevenlabs", "heygen"] as const;
 export type Provider = (typeof PROVIDERS)[number];
 
 export type ConnectionKind = "api" | "mcp" | "cli";
@@ -40,9 +40,21 @@ export const PROVIDER_SPEC: Record<Provider, {
   },
   kling: {
     label: "Kling",
-    purpose: "Video generation from step 6 — the I2V route for talking heads and mechanism beats.",
+    purpose: "Video generation — the I2V route for beats, and the source clips for the voice route.",
     kinds: ["mcp", "api"],
     envFallback: ["KLING_MCP_URL", "KLING_MCP_TOKEN"],
+  },
+  elevenlabs: {
+    label: "ElevenLabs",
+    purpose: "Instant Voice Clone from the source clips, then Eleven v3 speech in that voice.",
+    kinds: ["api"],
+    envFallback: ["ELEVENLABS_API_KEY"],
+  },
+  heygen: {
+    label: "HeyGen",
+    purpose: "Avatar V talking heads — identity learned from the source clips, lip-synced to the chosen take.",
+    kinds: ["api"],
+    envFallback: ["HEYGEN_API_KEY"],
   },
 };
 
@@ -201,6 +213,13 @@ export async function resolveConnection(provider: Provider): Promise<ResolvedCon
 function resolveFromEnv(provider: Provider): ResolvedConnection | null {
   if (provider === "anthropic") {
     const apiKey = process.env.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_AUTH_TOKEN;
+    if (!apiKey) return null;
+    return { provider, kind: "api", config: {}, secret: { apiKey }, source: "env" };
+  }
+
+  // Providers reached by a plain API key rather than an MCP endpoint.
+  if (provider === "elevenlabs" || provider === "heygen") {
+    const apiKey = process.env[`${provider.toUpperCase()}_API_KEY`];
     if (!apiKey) return null;
     return { provider, kind: "api", config: {}, secret: { apiKey }, source: "env" };
   }
