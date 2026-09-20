@@ -36,8 +36,11 @@ export default async function BuildsPage() {
     <main style={{ maxWidth: 880, margin: "0 auto", padding: "40px 16px 80px" }}>
       <header style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 24 }}>
         <h1 style={{ fontSize: 20, margin: 0 }}>Builds</h1>
-        <span className="badge">
-          Standards V{standards.version} · {standards.sections.length} sections · {standards.strings.length} strings
+        <span style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+          <span className="badge">
+            Standards V{standards.version} · {standards.sections.length} sections · {standards.strings.length} strings
+          </span>
+          <Link href="/settings" className="badge" style={{ textDecoration: "none" }}>Settings</Link>
         </span>
       </header>
 

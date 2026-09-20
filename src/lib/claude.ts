@@ -21,16 +21,37 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 // or the inferred parsed_output type does not line up.
 import type * as z from "zod/v4";
 import { assembleContext, renderStringLibrary, resolveReferencedStrings, loadStandards } from "@/standards/registry";
+import { requireConnection } from "./connections";
 
 export const MODEL = "claude-opus-5";
 
-declare global {
-  // eslint-disable-next-line no-var
-  var __anthropic: Anthropic | undefined;
-}
+/**
+ * The Anthropic client is resolved per call rather than constructed once at
+ * module load, because the API key now lives in Settings and can be rotated
+ * without a restart. A module-level singleton would pin the process to
+ * whatever key existed when it first imported.
+ *
+ * Clients are cached by key so rotation swaps the instance and a steady key
+ * still reuses one connection pool.
+ */
+const clientCache = new Map<string, Anthropic>();
 
-export const anthropic = globalThis.__anthropic ?? new Anthropic();
-if (process.env.NODE_ENV !== "production") globalThis.__anthropic = anthropic;
+export async function getAnthropic(): Promise<Anthropic> {
+  const connection = await requireConnection("anthropic");
+  if (!("apiKey" in connection.secret)) {
+    throw new Error("The stored Anthropic connection carries no API key.");
+  }
+
+  const { apiKey } = connection.secret;
+  const cached = clientCache.get(apiKey);
+  if (cached) return cached;
+
+  const client = new Anthropic({ apiKey });
+  // One entry is enough: a rotation makes the old key dead weight.
+  clientCache.clear();
+  clientCache.set(apiKey, client);
+  return client;
+}
 
 /**
  * The role preamble. §1 verbatim in substance: the deliverable is the artefact,
@@ -103,7 +124,9 @@ export async function callWithStandards<T>(
     library ? `\n\n---\n\n# Referenced strings from Appendix A\n\nThese are locked. Where a section names one of these IDs, this is its exact text.\n\n${library}` : "",
   ].join("\n");
 
-  const stream = anthropic.messages.stream({
+  const client = await getAnthropic();
+
+  const stream = client.messages.stream({
     model: MODEL,
     max_tokens: maxTokens,
     thinking: { type: "adaptive" },

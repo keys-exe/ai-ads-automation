@@ -15,7 +15,7 @@
 
 import { one, query, transaction } from "@/db/client";
 import { enqueue, QUEUE_ABSORB_SCRIPT, QUEUE_CAST, QUEUE_LOCATIONS, QUEUE_MAPS } from "@/worker/queue";
-import { generationClientFromEnv, type GenerationClient } from "@/generation/client";
+import { generationClient, type GenerationClient } from "@/generation/client";
 import type { GenerationOutcome, GenerationRequest } from "@/generation/runner";
 import { deriveCast, generateSheets } from "./cast";
 import { deriveLocations, generatePropertyPlates, generateLocationPlates } from "./locations";
@@ -193,7 +193,7 @@ export async function runCast(processId: number): Promise<void> {
     // intact and the step resumes rather than re-deriving a different cast.
     await persistCast(buildId, cast);
 
-    client = generationClientFromEnv();
+    client = await generationClient();
     const { outcomes, requests } = await generateSheets(cast, client, {
       onStage: (s) => void setStage(processId, s),
       onManifest: (m) => recordManifest(buildId, processId, "avatar_sheet", m),
@@ -304,7 +304,7 @@ export async function runLocations(processId: number): Promise<void> {
 
     await persistLocations(buildId, locations);
 
-    client = generationClientFromEnv();
+    client = await generationClient();
 
     // --- The property plate first. §30G: checked and locked BEFORE the first
     //     location plate is built against it.

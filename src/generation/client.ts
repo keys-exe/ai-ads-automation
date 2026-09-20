@@ -240,17 +240,35 @@ function extractUrls(record: Record<string, unknown>): string[] {
   return [...new Set(out)];
 }
 
-/** Built from env so the worker has one place that knows how to reach the platform. */
-export function generationClientFromEnv(): GenerationClient {
-  const url = process.env.HIGGSFIELD_MCP_URL;
-  if (!url) {
+/**
+ * Build a client from the configured connection.
+ *
+ * Reads Settings first and falls back to the environment, so a deployment can
+ * run on env vars alone while a team can connect a credential through the UI
+ * without a redeploy.
+ */
+export async function generationClient(provider: "higgsfield" | "kling" = "higgsfield"): Promise<GenerationClient> {
+  const { requireConnection } = await import("@/lib/connections");
+  const connection = await requireConnection(provider);
+
+  if (connection.kind === "cli") {
     throw new GenerationError(
-      "HIGGSFIELD_MCP_URL is not set. Step 3 onward generates, and generation needs a configured MCP endpoint.",
+      `The ${provider} connection is a CLI credentials file, which this worker cannot use directly. ` +
+        `Add an MCP or API connection in Settings for generation.`,
     );
   }
-  const headers: Record<string, string> = {};
-  if (process.env.HIGGSFIELD_MCP_TOKEN) {
-    headers.Authorization = `Bearer ${process.env.HIGGSFIELD_MCP_TOKEN}`;
+
+  const url = connection.config.url;
+  if (!url) {
+    throw new GenerationError(`The ${provider} connection has no endpoint URL. Add one in Settings.`);
   }
+
+  const token = "token" in connection.secret ? connection.secret.token
+    : "apiKey" in connection.secret ? connection.secret.apiKey
+    : "";
+
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+
   return new McpGenerationClient(url, headers);
 }

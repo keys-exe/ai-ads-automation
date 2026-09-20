@@ -20,7 +20,7 @@
 
 import * as z from "zod/v4";
 import type Anthropic from "@anthropic-ai/sdk";
-import { anthropic, MODEL } from "@/lib/claude";
+import { getAnthropic, MODEL } from "@/lib/claude";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 
 const CheckItem = z.object({
@@ -82,7 +82,9 @@ async function runCheck(
     },
   ];
 
-  const message = await anthropic.messages.stream({
+  const client = await getAnthropic();
+
+  const message = await client.messages.stream({
     model: MODEL,
     max_tokens: 8000,
     thinking: { type: "adaptive" },
