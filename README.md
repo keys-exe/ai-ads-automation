@@ -183,6 +183,12 @@ doc-lint: 24 errors, 34 warnings
 Those errors are real and they are in the document, not the parser — see
 `docs/doc-lint-findings.md`.
 
+## New here?
+
+[`docs/getting-started.md`](docs/getting-started.md) — what to connect, what
+each step costs, and how to run a build. No technical background assumed. The
+app's own `/setup` page says the same thing and keeps it current.
+
 ## Deploying
 
 `docker compose up -d --build` brings up Postgres, the web app and the worker.

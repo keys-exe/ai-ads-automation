@@ -4,6 +4,7 @@ import { query } from "@/db/client";
 import { currentUser } from "@/lib/auth";
 import { loadStandards } from "@/standards/registry";
 import { NewBuildForm } from "@/components/NewBuildForm";
+import { checkReadiness } from "@/lib/readiness";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +32,7 @@ export default async function BuildsPage() {
   `);
 
   const standards = loadStandards();
+  const readiness = await checkReadiness();
 
   return (
     <main style={{ maxWidth: 880, margin: "0 auto", padding: "40px 16px 80px" }}>
@@ -40,9 +42,29 @@ export default async function BuildsPage() {
           <span className="badge">
             Standards V{standards.version} · {standards.sections.length} sections · {standards.strings.length} strings
           </span>
+          <Link href="/setup" className="badge" style={{ textDecoration: "none" }}>Setup</Link>
           <Link href="/settings" className="badge" style={{ textDecoration: "none" }}>Settings</Link>
         </span>
       </header>
+
+      {readiness.nextAction && !readiness.canRunSteps12 && (
+        <section className="card" style={{ marginBottom: 16, borderColor: "var(--border-accent)" }}>
+          <div style={{ fontSize: 11, letterSpacing: "0.09em", textTransform: "uppercase", color: "var(--text-muted)" }}>
+            Not ready yet
+          </div>
+          <p style={{ fontSize: 14.5, margin: "6px 0 4px" }}>{readiness.nextAction.label}</p>
+          <p style={{ fontSize: 12.5, color: "var(--text-secondary)", margin: "0 0 10px" }}>
+            {readiness.nextAction.detail}
+          </p>
+          <Link href="/setup" style={{
+            background: "var(--fill-accent)", color: "var(--surface-2)",
+            borderRadius: "var(--radius)", padding: "7px 13px", fontSize: 13,
+            textDecoration: "none", display: "inline-block",
+          }}>
+            Open Setup
+          </Link>
+        </section>
+      )}
 
       <NewBuildForm />
 

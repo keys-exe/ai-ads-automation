@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { friendly } from "@/lib/friendly-errors";
 
 /**
  * The upload bundle — one panel, five boxes, filled once.
@@ -236,6 +237,7 @@ export function UploadPanel({
             disabledReason="Upload an inspo video first"
             process={stepProcess(1)}
             onRun={() => run(1)}
+            cost="~$0.30 · no image or video credits"
           />
           <ProcessButton
             step={2}
@@ -253,6 +255,7 @@ export function UploadPanel({
             disabledReason="Upload a script and at least one product reference first"
             process={stepProcess(2)}
             onRun={() => run(2)}
+            cost="~$0.30 · no image or video credits"
           />
           <ProcessButton
             step={3}
@@ -263,6 +266,7 @@ export function UploadPanel({
             process={stepProcess(3)}
             onRun={() => run(3)}
             chainsTo="starts steps 4 and 5"
+            cost="Anthropic + Higgsfield image credits"
             spendsCredits
           />
           <ProcessButton
@@ -274,6 +278,7 @@ export function UploadPanel({
             process={stepProcess(4)}
             onRun={() => run(4)}
             automatic
+            cost="Anthropic + Higgsfield image credits"
             spendsCredits
           />
           <ProcessButton
@@ -285,6 +290,7 @@ export function UploadPanel({
             process={stepProcess(5)}
             onRun={() => run(5)}
             automatic
+            cost="~$0.25 · no image or video credits"
           />
         </div>
       </section>
@@ -414,6 +420,7 @@ function ProcessButton({
   chainsTo,
   automatic,
   spendsCredits,
+  cost,
 }: {
   step: number;
   label: string;
@@ -427,6 +434,8 @@ function ProcessButton({
   /** True where the step normally starts itself; Run stays available as a re-run. */
   automatic?: boolean;
   spendsCredits?: boolean;
+  /** Shown before the click, so the price is never a surprise afterwards. */
+  cost?: string;
 }) {
   const running = process?.status === "queued" || process?.status === "running";
 
@@ -445,6 +454,7 @@ function ProcessButton({
             {chainsTo && <span className="badge" data-tone="accent">{chainsTo}</span>}
             {automatic && <span className="badge">starts automatically</span>}
             {spendsCredits && <span className="badge" data-tone="warn">spends credits</span>}
+            {cost && <span className="badge">{cost}</span>}
           </div>
         </div>
         <button onClick={onRun} disabled={!enabled || running} style={enabled && !running ? primaryButton : disabledButton}>
@@ -464,11 +474,46 @@ function ProcessButton({
             {process.status}
           </span>
           {running && <span className="badge">{process.stage}</span>}
-          {process.error && (
-            <span className="badge" data-tone="error" style={{ whiteSpace: "normal" }}>{process.error}</span>
-          )}
+          {process.error && <FriendlyFailure raw={process.error} />}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * A failure, stated as an instruction.
+ *
+ * The raw message is kept behind a disclosure rather than dropped — it is what
+ * anyone debugging actually needs, and hiding it entirely would trade one kind
+ * of unhelpfulness for another.
+ */
+function FriendlyFailure({ raw }: { raw: string }) {
+  const f = friendly(new Error(raw));
+  return (
+    <div style={{
+      flexBasis: "100%", marginTop: 8, padding: "10px 12px",
+      background: "var(--surface-1)", borderRadius: "var(--radius)",
+      borderLeft: "3px solid var(--hl-negatives)",
+    }}>
+      <p style={{ fontSize: 13.5, margin: 0 }}>{f.summary}</p>
+      {f.fix && (
+        <p style={{ fontSize: 13, color: "var(--text-secondary)", margin: "6px 0 0" }}>{f.fix}</p>
+      )}
+      {f.href && (
+        <a href={f.href} style={{
+          display: "inline-block", marginTop: 8, fontSize: 12.5,
+          color: "var(--fill-accent)", textDecoration: "none",
+        }}>
+          Open Settings →
+        </a>
+      )}
+      <details style={{ marginTop: 8 }}>
+        <summary style={{ fontSize: 11.5, color: "var(--text-muted)", cursor: "pointer" }}>
+          Technical detail
+        </summary>
+        <pre className="prompt" style={{ marginTop: 6, fontSize: 11 }}>{f.technical}</pre>
+      </details>
     </div>
   );
 }
