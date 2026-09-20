@@ -1,3 +1,9 @@
+> **Not wired in.** This route was built against the previous
+> Postgres-backed architecture and its runner now lives at
+> `legacy/src/processes/voice/run.ts`. The ElevenLabs and HeyGen adapters it
+> uses are live in `src/providers/` and both are marked **unverified against
+> live docs**. Porting this is Phase 2 work, alongside §18 steps 6-8.
+
 # The voice + avatar talking-head route
 
 A second production route for talking heads, alongside the standards'

@@ -3,7 +3,9 @@
  *
  * §18: "Steps 3, 4 and 5 send their artefact and continue in the same pass — a
  * handoff, not an approval. The only gate in the build is step 6." So each of
- * these three enqueues the next on completion and nothing waits for a person.
+ * these three runs the next on completion and nothing waits for a person. The
+ * handoff used to be a queue enqueue; it is a direct call now, because there is
+ * no second process to hand to and §18's rule is about waiting, not transport.
  *
  * What DOES gate, inside a step:
  *   - §19's panel check, before a sheet is used anywhere.
@@ -13,9 +15,32 @@
  * automatic pass is not recorded as a human one.
  */
 
-import { one, query, transaction } from "@/db/client";
-import { enqueue, QUEUE_ABSORB_SCRIPT, QUEUE_CAST, QUEUE_LOCATIONS, QUEUE_MAPS } from "@/worker/queue";
+import {
+  assetText,
+  claimStep,
+  failStep,
+  finishStep,
+  findAsset,
+  getArtifact,
+  putArtifact,
+  setStage as setStepStage,
+  updateLedger,
+} from "@/store";
+import {
+  actMap as actMapOf,
+  captureEvents as captureEventsOf,
+  characters as charactersOf,
+  claims as claimsOf,
+  generationJobs as generationJobsOf,
+  generationKey,
+  locations as locationsOf,
+  phrases as phrasesOf,
+  properties as propertiesOf,
+  readRoster,
+  storyDays as storyDaysOf,
+} from "@/store/collections";
 import { generationClient, type GenerationClient } from "@/generation/client";
+import { report } from "@/lib/report";
 import type { GenerationOutcome, GenerationRequest } from "@/generation/runner";
 import { deriveCast, generateSheets } from "./cast";
 import { deriveLocations, generatePropertyPlates, generateLocationPlates } from "./locations";
@@ -27,133 +52,99 @@ import type { CastOutput, LocationOutput, MapsOutput } from "./schemas-cast";
  * Shared plumbing
  * ------------------------------------------------------------------ */
 
-interface ProcessRow extends Record<string, unknown> {
-  id: number;
-  build_id: number;
-  step: number;
-}
-
-async function claim(processId: number): Promise<ProcessRow | undefined> {
-  return one<ProcessRow>(
-    `UPDATE processes SET status = 'running', started_at = now(), stage = 'starting', error = NULL
-      WHERE id = $1 AND status = 'queued' RETURNING *`,
-    [processId],
-  );
-}
-
-async function fail(processId: number, error: unknown): Promise<void> {
-  const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-  await query(
-    `UPDATE processes SET status = 'failed', error = $2, stage = 'failed', finished_at = now() WHERE id = $1`,
-    [processId, message.slice(0, 4000)],
-  );
-}
-
-async function setStage(processId: number, stage: string): Promise<void> {
-  await query("UPDATE processes SET stage = $2 WHERE id = $1", [processId, stage]);
-}
-
-async function finish(processId: number, usage: unknown): Promise<void> {
-  await query(
-    `UPDATE processes SET status = 'done', stage = 'done', finished_at = now(), usage = $2::jsonb WHERE id = $1`,
-    [processId, JSON.stringify(usage ?? {})],
-  );
-}
-
-/**
- * Create the next step's process row and enqueue it.
- *
- * §18's handoff. A step that completes without handing off would stall the
- * chain silently, so this is called from the success path of every step.
- */
-async function handOff(buildId: number, step: 4 | 5, label: string, queue: string): Promise<void> {
-  const existing = await one<{ id: number }>(
-    `SELECT id FROM processes WHERE build_id = $1 AND step = $2 AND status IN ('queued','running')`,
-    [buildId, step],
-  );
-  if (existing) return;
-
-  const proc = await one<{ id: number }>(
-    `INSERT INTO processes (build_id, step, kind, prompt_label, status, stage)
-     VALUES ($1, $2, $3, $4, 'queued', 'queued') RETURNING id`,
-    [buildId, step, step === 4 ? "locations" : "maps", label],
-  );
-  const jobId = await enqueue(queue, { processId: proc!.id, buildId });
-  await query(`UPDATE processes SET queue_job_id = $2 WHERE id = $1`, [proc!.id, jobId]);
-}
-
 /** §16B: the manifest is written before the payload so item n can be traced to beat n. */
 async function recordManifest(
-  buildId: number,
-  processId: number,
+  slug: string,
   purpose: string,
   requests: GenerationRequest[],
 ): Promise<void> {
-  for (const request of requests) {
-    await query(
-      `INSERT INTO generation_jobs (build_id, process_id, purpose, ref, label, batch_index, model, params, prompt)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)`,
-      [
-        buildId, processId, purpose, request.ref, request.label, request.index,
-        request.params.model,
-        JSON.stringify({ ...request.params, prompt: undefined }),
-        request.params.prompt,
-      ],
-    );
-  }
+  const jobs = generationJobsOf(slug);
+  const existing = await jobs.all();
+  const rows = requests.map((request) => ({
+    key: generationKey(purpose, request.ref),
+    purpose,
+    ref: request.ref,
+    label: request.label,
+    batchIndex: request.index,
+    model: request.params.model,
+    params: { ...request.params, prompt: undefined },
+    prompt: request.params.prompt,
+    jobId: null,
+    status: "pending",
+    loggedModel: null,
+    resultUrls: [],
+    attempts: 0,
+    failures: [],
+    createdAt: new Date().toISOString(),
+    finishedAt: null,
+  }));
+
+  const replaced = new Set(rows.map((row) => row.key));
+  await jobs.replaceAll([...existing.filter((row) => !replaced.has(String(row.key))), ...rows]);
+
+  report({
+    kind: "manifest",
+    purpose,
+    items: rows.map((row) => ({
+      ref: row.ref,
+      label: row.label,
+      model: row.model,
+      params: row.params as Record<string, unknown>,
+    })),
+  });
 }
 
 /** §16B: every returned job id is written back against its ref, never reported bare. */
 async function recordOutcomes(
-  buildId: number,
+  slug: string,
   purpose: string,
   outcomes: GenerationOutcome[],
 ): Promise<void> {
+  const jobs = generationJobsOf(slug);
   for (const outcome of outcomes) {
-    await query(
-      `UPDATE generation_jobs
-          SET job_id = $4, status = $5, logged_model = $6, result_urls = $7::jsonb,
-              attempts = $8, failures = $9::jsonb, finished_at = now()
-        WHERE build_id = $1 AND purpose = $2 AND ref = $3`,
-      [
-        buildId, purpose, outcome.ref, outcome.jobId, outcome.status, outcome.loggedModel,
-        JSON.stringify(outcome.resultUrls), outcome.attempts, JSON.stringify(outcome.failures),
-      ],
-    );
+    await jobs.patch(generationKey(purpose, outcome.ref), {
+      jobId: outcome.jobId,
+      status: outcome.status,
+      loggedModel: outcome.loggedModel,
+      resultUrls: outcome.resultUrls,
+      attempts: outcome.attempts,
+      failures: outcome.failures,
+      finishedAt: new Date().toISOString(),
+    });
   }
+
+  report({
+    kind: "outcomes",
+    purpose,
+    items: outcomes.map((outcome) => ({
+      ref: outcome.ref,
+      jobId: outcome.jobId,
+      status: outcome.status,
+      loggedModel: outcome.loggedModel,
+      attempts: outcome.attempts,
+    })),
+  });
 }
 
-async function buildContext(buildId: number) {
-  const build = await one<{ declared: Record<string, unknown> }>(
-    `SELECT declared FROM builds WHERE id = $1`, [buildId],
-  );
-
-  const phrases = await query<{ phrase_id: string; text: string; structural_job: string | null }>(
-    `SELECT phrase_id, text, structural_job FROM phrases WHERE build_id = $1 ORDER BY ordinal`,
-    [buildId],
-  );
-
-  const sheetAsset = await one<{ text_content: string | null }>(
-    `SELECT text_content FROM assets WHERE build_id = $1 AND kind = 'product_sheet' LIMIT 1`,
-    [buildId],
-  );
-
-  const absorption = await one<{ payload: Record<string, unknown> }>(
-    `SELECT payload FROM artifacts WHERE build_id = $1 AND kind = 'absorption_sheet' ORDER BY id DESC LIMIT 1`,
-    [buildId],
-  );
+async function buildContext(slug: string) {
+  const ledger = await updateLedger(slug, () => {});
+  const phraseRows = await phrasesOf(slug).all();
+  const sheetAsset = await findAsset(slug, "product_sheet");
+  const absorption = await getArtifact<Record<string, unknown>>(slug, "absorption_sheet");
 
   return {
-    declared: build?.declared ?? {},
-    phraseInventory: phrases.map((p) => ({
-      phraseId: p.phrase_id, text: p.text, structuralJob: p.structural_job,
+    declared: (ledger.declared ?? {}) as Record<string, unknown>,
+    phraseInventory: phraseRows.map((row) => ({
+      phraseId: row.phraseId,
+      text: row.text,
+      structuralJob: row.structuralJob ?? null,
     })),
-    productSheetText: sheetAsset?.text_content ?? null,
+    productSheetText: sheetAsset ? await assetText(sheetAsset) : null,
     absorptionSummary: absorption
       ? {
-          styleLock: absorption.payload.styleLock,
-          formatRead: absorption.payload.formatRead,
-          beatItPlan: absorption.payload.beatItPlan,
+          styleLock: absorption.styleLock,
+          formatRead: absorption.formatRead,
+          beatItPlan: absorption.beatItPlan,
         }
       : null,
   };
@@ -163,15 +154,24 @@ async function buildContext(buildId: number) {
  * Step 3 — cast
  * ------------------------------------------------------------------ */
 
-export async function runCast(processId: number): Promise<void> {
-  const proc = await claim(processId);
-  if (!proc) return;
+/**
+ * §18's handoff is about not waiting for a person, not about transport, so the
+ * default is to carry straight on into the next step. `chain: false` exists for
+ * re-running one step in isolation after a correction (§34) — it is an operator
+ * choice at the command line, never a step deciding to stop on its own.
+ */
+export interface StepOptions {
+  chain?: boolean;
+}
+
+export async function runCast(slug: string, options: StepOptions = {}): Promise<void> {
+  const claimed = await claimStep(slug, 3, "cast", "CAST — GENERATE REFERENCE SHEETS");
+  if (!claimed) return;
 
   let client: GenerationClient | null = null;
 
   try {
-    const buildId = proc.build_id;
-    const context = await buildContext(buildId);
+    const context = await buildContext(slug);
 
     if (!context.phraseInventory.length) {
       throw new Error("No phrase inventory. Step 3 casts from step 2's inventory — run step 2 first.");
@@ -179,100 +179,81 @@ export async function runCast(processId: number): Promise<void> {
 
     // The Roster Ledger spans builds: §19A clears a new character against
     // every locked avatar, not just this build's.
-    const roster = await query<{ character_id: string; name: string; axes: Record<string, unknown> }>(
-      `SELECT character_id, name, axes FROM characters WHERE sheet_status = 'locked' ORDER BY id`,
-    );
+    const roster = await readRoster();
 
     const { cast, usage } = await deriveCast({
       ...context,
-      roster: roster.map((r) => ({ characterId: r.character_id, name: r.name, axes: r.axes })),
-      onStage: (s) => void setStage(processId, s),
+      roster: roster.map((entry) => ({
+        characterId: entry.characterId,
+        name: entry.name,
+        axes: (entry.axes ?? {}) as Record<string, unknown>,
+      })),
+      onStage: (stage) => void setStepStage(slug, 3, stage),
     });
 
     // Persist before generating, so a generation failure leaves the derivation
     // intact and the step resumes rather than re-deriving a different cast.
-    await persistCast(buildId, cast);
+    await persistCast(slug, cast);
 
     client = await generationClient();
-    const { outcomes, requests } = await generateSheets(cast, client, {
-      onStage: (s) => void setStage(processId, s),
-      onManifest: (m) => recordManifest(buildId, processId, "avatar_sheet", m),
+    const { outcomes } = await generateSheets(cast, client, {
+      onStage: (stage) => void setStepStage(slug, 3, stage),
+      onManifest: (manifest) => recordManifest(slug, "avatar_sheet", manifest),
     });
-    await recordOutcomes(buildId, "avatar_sheet", outcomes);
+    await recordOutcomes(slug, "avatar_sheet", outcomes);
 
     // --- §19's panel check, before the sheet is used anywhere.
-    await setStage(processId, "panel-check");
+    await setStepStage(slug, 3, "panel-check");
     for (const outcome of outcomes) {
       const url = outcome.resultUrls[0];
+
       if (outcome.status !== "completed" || !url) {
-        await query(
-          `UPDATE characters SET sheet_status = 'needs_human', sheet_job_id = $3 WHERE build_id = $1 AND character_id = $2`,
-          [buildId, outcome.ref, outcome.jobId],
-        );
+        await charactersOf(slug).patch(outcome.ref, {
+          sheetStatus: "needs_human",
+          sheetJobId: outcome.jobId,
+        });
         continue;
       }
 
       const check = await panelCheck(url);
-      await query(
-        `UPDATE characters
-            SET sheet_job_id = $3, sheet_url = $4, panel_check = $5::jsonb, sheet_status = $6
-          WHERE build_id = $1 AND character_id = $2`,
-        [
-          buildId, outcome.ref, outcome.jobId, url, JSON.stringify(check),
-          // An automatic pass locks the sheet so the chain proceeds; the
-          // human review E1 asks for is queued, not claimed.
-          check.pass ? "locked" : "panel_failed",
-        ],
-      );
+      await charactersOf(slug).patch(outcome.ref, {
+        sheetJobId: outcome.jobId,
+        sheetUrl: url,
+        panelCheck: check,
+        // An automatic pass locks the sheet so the chain proceeds; the human
+        // review E1 asks for is queued, not claimed.
+        sheetStatus: check.pass ? "locked" : "panel_failed",
+      });
+
+      // E3's build-level `subjects{S-id → job_id}`.
+      await updateLedger(slug, (ledger) => {
+        ledger.subjects[outcome.ref] = check.pass ? outcome.jobId : null;
+      });
     }
 
-    await query(
-      `INSERT INTO artifacts (build_id, process_id, kind, payload) VALUES ($1, $2, 'cast', $3::jsonb)`,
-      [buildId, processId, JSON.stringify(cast)],
-    );
-
-    await finish(processId, usage);
-
-    // §18: send, then straight on.
-    await handOff(buildId, 4, "PROPERTY AND LOCATION MAPS", QUEUE_LOCATIONS);
+    await putArtifact(slug, "cast", cast);
+    await finishStep(slug, 3, usage);
   } catch (error) {
-    await fail(processId, error);
+    await failStep(slug, 3, error);
     throw error;
   } finally {
     await client?.close();
   }
+
+  // §18: send, then straight on.
+  if (options.chain !== false) await runLocations(slug, options);
 }
 
-async function persistCast(buildId: number, cast: CastOutput): Promise<void> {
-  await transaction(async (db) => {
-    // Re-running step 3 replaces this build's cast. Locked sheets from OTHER
-    // builds are the roster and are never touched.
-    await db.query(`DELETE FROM characters WHERE build_id = $1`, [buildId]);
+async function persistCast(slug: string, cast: CastOutput): Promise<void> {
+  // Re-running step 3 replaces this build's cast. Locked sheets from OTHER
+  // builds are the roster and live in their own build directories, so they are
+  // untouched by construction.
+  await charactersOf(slug).replaceAll(
+    cast.cast.map((member) => ({ ...member, slug, sheetStatus: "pending" })),
+  );
 
-    for (const member of cast.cast) {
-      await db.query(
-        `INSERT INTO characters
-           (build_id, character_id, name, role, is_narrator, speaks, beat_count,
-            axes, clearance, voice, constraint_sheet, wardrobe_classes, signature_item, sheet_prompt)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13,$14)`,
-        [
-          buildId, member.characterId, member.name, member.role, member.isNarrator,
-          member.speaks, member.beatCount,
-          JSON.stringify({ ...member.axes, derivation: member.derivation }),
-          JSON.stringify(member.clearance),
-          member.voice ? JSON.stringify(member.voice) : null,
-          member.constraintSheet ? JSON.stringify(member.constraintSheet) : null,
-          JSON.stringify(member.wardrobeClasses),
-          member.signatureItem,
-          JSON.stringify(member.sheetFill),
-        ],
-      );
-    }
-
-    await db.query(
-      `UPDATE builds SET declared = declared || $2::jsonb, updated_at = now() WHERE id = $1`,
-      [buildId, JSON.stringify({ generic_class_pool: cast.genericClassPool })],
-    );
+  await updateLedger(slug, (ledger) => {
+    ledger.declared.genericClassPool = cast.genericClassPool;
   });
 }
 
@@ -280,64 +261,67 @@ async function persistCast(buildId: number, cast: CastOutput): Promise<void> {
  * Step 4 — property and locations
  * ------------------------------------------------------------------ */
 
-export async function runLocations(processId: number): Promise<void> {
-  const proc = await claim(processId);
-  if (!proc) return;
+export async function runLocations(slug: string, options: StepOptions = {}): Promise<void> {
+  const claimed = await claimStep(slug, 4, "locations", "PROPERTY AND LOCATION MAPS");
+  if (!claimed) return;
 
   let client: GenerationClient | null = null;
 
   try {
-    const buildId = proc.build_id;
-    const context = await buildContext(buildId);
-
-    const cast = await query<{ character_id: string; name: string; role: string; axes: Record<string, unknown> }>(
-      `SELECT character_id, name, role, axes FROM characters WHERE build_id = $1 ORDER BY id`,
-      [buildId],
-    );
+    const context = await buildContext(slug);
+    const cast = await charactersOf(slug).all();
 
     const { locations, usage } = await deriveLocations({
       phraseInventory: context.phraseInventory,
       declared: context.declared,
-      cast: cast.map((c) => ({ characterId: c.character_id, name: c.name, role: c.role, axes: c.axes })),
-      onStage: (s) => void setStage(processId, s),
+      cast: cast.map((member) => ({
+        characterId: member.characterId, name: member.name, role: member.role, axes: member.axes,
+      })),
+      onStage: (stage) => void setStepStage(slug, 4, stage),
     });
 
-    await persistLocations(buildId, locations);
+    await persistLocations(slug, locations);
 
     client = await generationClient();
 
     // --- The property plate first. §30G: checked and locked BEFORE the first
     //     location plate is built against it.
-    await setStage(processId, "property-plate");
+    await setStepStage(slug, 4, "property-plate");
     const propertyOutcomes = await generatePropertyPlates(locations.properties, client, {
-      onStage: (s) => void setStage(processId, s),
-      onManifest: (m) => recordManifest(buildId, processId, "property_plate", m),
+      onStage: (stage) => void setStepStage(slug, 4, stage),
+      onManifest: (manifest) => recordManifest(slug, "property_plate", manifest),
     });
-    await recordOutcomes(buildId, "property_plate", propertyOutcomes);
+    await recordOutcomes(slug, "property_plate", propertyOutcomes);
 
     const readyDwellings = new Map<string, string>();
     for (const outcome of propertyOutcomes) {
       const url = outcome.resultUrls[0];
+
       if (outcome.status !== "completed" || !url) {
-        await query(
-          `UPDATE properties SET plate_status = 'needs_human', plate_job_id = $3 WHERE build_id = $1 AND dwelling_id = $2`,
-          [buildId, outcome.ref, outcome.jobId],
-        );
+        await propertiesOf(slug).patch(outcome.ref, {
+          plateStatus: "needs_human",
+          plateJobId: outcome.jobId,
+        });
+        await recordProperty(slug, outcome.ref, outcome.jobId, null);
         continue;
       }
+
       const check = await propertyPlateCheck(url);
-      await query(
-        `UPDATE properties SET plate_job_id = $3, plate_url = $4, plate_check = $5::jsonb, plate_status = $6
-          WHERE build_id = $1 AND dwelling_id = $2`,
-        [buildId, outcome.ref, outcome.jobId, url, JSON.stringify(check), check.pass ? "locked" : "plate_failed"],
-      );
+      await propertiesOf(slug).patch(outcome.ref, {
+        plateJobId: outcome.jobId,
+        plateUrl: url,
+        plateCheck: check,
+        plateStatus: check.pass ? "locked" : "plate_failed",
+      });
+      await recordProperty(slug, outcome.ref, outcome.jobId, check);
+
       // A media id for the attachment: the platform accepts a prior job_id in
       // `medias[].value`, which avoids a re-upload round trip.
       if (check.pass && outcome.jobId) readyDwellings.set(outcome.ref, outcome.jobId);
     }
 
     // --- Location plates, for PLATED locations only.
-    await setStage(processId, "location-plates");
+    await setStepStage(slug, 4, "location-plates");
     const plated = locations.locations.filter((l) => l.tier === "PLATED" && l.roomDescription);
 
     // A dwelling room whose property plate failed is held rather than
@@ -347,21 +331,20 @@ export async function runLocations(processId: number): Promise<void> {
     const held = plated.filter((l) => l.dwellingId && !readyDwellings.has(l.dwellingId));
 
     for (const location of held) {
-      await query(
-        `UPDATE locations SET plate_status = 'held_property_plate_failed' WHERE build_id = $1 AND location_id = $2`,
-        [buildId, location.locationId],
-      );
+      await locationsOf(slug).patch(location.locationId, {
+        plateStatus: "held_property_plate_failed",
+      });
     }
 
     const propertyById = new Map(locations.properties.map((p) => [p.dwellingId, p]));
-    const plateInputs = buildable.map((l) => {
-      const property = l.dwellingId ? propertyById.get(l.dwellingId) : null;
+    const plateInputs = buildable.map((location) => {
+      const property = location.dwellingId ? propertyById.get(location.dwellingId) : null;
       return {
-        locationId: l.locationId,
-        name: l.name,
-        roomDescription: l.roomDescription!,
-        lightingProfile: l.sheet.lightingProfile,
-        anchors: l.anchors,
+        locationId: location.locationId,
+        name: location.name,
+        roomDescription: location.roomDescription!,
+        lightingProfile: location.sheet.lightingProfile,
+        anchors: location.anchors,
         property: property
           ? { ...property, plateMediaId: readyDwellings.get(property.dwellingId) ?? null }
           : null,
@@ -369,203 +352,213 @@ export async function runLocations(processId: number): Promise<void> {
     });
 
     const locationOutcomes = await generateLocationPlates(plateInputs, client, {
-      onStage: (s) => void setStage(processId, s),
-      onManifest: (m) => recordManifest(buildId, processId, "location_plate", m),
+      onStage: (stage) => void setStepStage(slug, 4, stage),
+      onManifest: (manifest) => recordManifest(slug, "location_plate", manifest),
     });
-    await recordOutcomes(buildId, "location_plate", locationOutcomes);
+    await recordOutcomes(slug, "location_plate", locationOutcomes);
 
-    await setStage(processId, "scene-check");
+    await setStepStage(slug, 4, "scene-check");
     for (const outcome of locationOutcomes) {
       const url = outcome.resultUrls[0];
-      const input = plateInputs.find((p) => p.locationId === outcome.ref);
+      const input = plateInputs.find((plate) => plate.locationId === outcome.ref);
+
       if (outcome.status !== "completed" || !url) {
-        await query(
-          `UPDATE locations SET plate_status = 'needs_human', plate_job_id = $3 WHERE build_id = $1 AND location_id = $2`,
-          [buildId, outcome.ref, outcome.jobId],
-        );
+        await locationsOf(slug).patch(outcome.ref, {
+          plateStatus: "needs_human",
+          plateJobId: outcome.jobId,
+        });
         continue;
       }
+
       const check = await locationPlateCheck(url, input?.anchors ?? []);
-      await query(
-        `UPDATE locations
-            SET plate_job_id = $3, plate_url = $4, plate_status = $5,
-                property_plate_job_id = $6
-          WHERE build_id = $1 AND location_id = $2`,
-        [
-          buildId, outcome.ref, outcome.jobId, url,
-          check.pass ? "locked" : "plate_failed",
-          input?.property?.plateMediaId ?? null,
-        ],
-      );
+      await locationsOf(slug).patch(outcome.ref, {
+        plateJobId: outcome.jobId,
+        plateUrl: url,
+        plateStatus: check.pass ? "locked" : "plate_failed",
+        propertyPlateJobId: input?.property?.plateMediaId ?? null,
+      });
     }
 
-    await query(
-      `INSERT INTO artifacts (build_id, process_id, kind, payload) VALUES ($1, $2, 'locations', $3::jsonb)`,
-      [buildId, processId, JSON.stringify(locations)],
-    );
+    // E3: `plates{location → job_id}`, every location row carrying a job id or
+    // an explicit null.
+    await updateLedger(slug, (ledger) => {
+      for (const location of locations.locations) {
+        const outcome = locationOutcomes.find((o) => o.ref === location.locationId);
+        ledger.plates[location.locationId] = outcome?.jobId ?? null;
+      }
+    });
 
-    await finish(processId, usage);
-    await handOff(buildId, 5, "ACT MAP AND WARDROBE MAP", QUEUE_MAPS);
+    await putArtifact(slug, "locations", locations);
+    await finishStep(slug, 4, usage);
   } catch (error) {
-    await fail(processId, error);
+    await failStep(slug, 4, error);
     throw error;
   } finally {
     await client?.close();
   }
+
+  if (options.chain !== false) await runMaps(slug);
 }
 
-async function persistLocations(buildId: number, output: LocationOutput): Promise<void> {
-  await transaction(async (db) => {
-    await db.query(`DELETE FROM locations WHERE build_id = $1`, [buildId]);
-    await db.query(`DELETE FROM properties WHERE build_id = $1`, [buildId]);
-
-    for (const property of output.properties) {
-      await db.query(
-        `INSERT INTO properties (build_id, dwelling_id, fields) VALUES ($1, $2, $3::jsonb)`,
-        [buildId, property.dwellingId, JSON.stringify(property)],
-      );
-    }
-
-    for (const location of output.locations) {
-      await db.query(
-        `INSERT INTO locations
-           (build_id, location_id, name, tier, channel, beat_count, ownership, dwelling_id,
-            sheet, anchors, geo_line, landmark, plate_prompt, plate_status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11,$12,$13,$14)`,
-        [
-          buildId, location.locationId, location.name, location.tier, location.channel,
-          location.beatCount, location.ownership, location.dwellingId,
-          JSON.stringify(location.sheet), JSON.stringify(location.anchors),
-          location.geoLine, location.landmark, location.roomDescription,
-          // §30C 1a: a plate is a consistency device, and a room with nothing
-          // to be consistent against does not earn one.
-          location.tier === "PLATED" ? "pending" : "not_required",
-        ],
-      );
-    }
+async function recordProperty(
+  slug: string,
+  dwellingId: string,
+  jobId: string | null,
+  check: unknown,
+): Promise<void> {
+  const { paths } = await import("@/store/paths");
+  await updateLedger(slug, (ledger) => {
+    ledger.property[dwellingId] = {
+      sheetPath: paths(slug).collection("properties"),
+      plateJobId: jobId,
+      plateCheck: check,
+    };
   });
+}
+
+async function persistLocations(slug: string, output: LocationOutput): Promise<void> {
+  await propertiesOf(slug).replaceAll(
+    output.properties.map((property) => ({ ...property, plateStatus: "pending" })),
+  );
+
+  await locationsOf(slug).replaceAll(
+    output.locations.map((location) => ({
+      ...location,
+      // §30C 1a: a plate is a consistency device, and a room with nothing to be
+      // consistent against does not earn one.
+      plateStatus: location.tier === "PLATED" ? "pending" : "not_required",
+    })),
+  );
+
+  // E9 gives Location Sheets their own directory, one file per location.
+  const { writeJson } = await import("@/store/json");
+  const { paths } = await import("@/store/paths");
+  for (const location of output.locations) {
+    await writeJson(paths(slug).locationSheet(location.locationId), location);
+  }
 }
 
 /* ------------------------------------------------------------------ *
  * Step 5 — act map and wardrobe map
  * ------------------------------------------------------------------ */
 
-export async function runMaps(processId: number): Promise<void> {
-  const proc = await claim(processId);
-  if (!proc) return;
+export async function runMaps(slug: string): Promise<void> {
+  const claimed = await claimStep(slug, 5, "maps", "ACT MAP AND WARDROBE MAP");
+  if (!claimed) return;
 
   try {
-    const buildId = proc.build_id;
-    const context = await buildContext(buildId);
+    const context = await buildContext(slug);
+    const cast = await charactersOf(slug).all();
+    const locations = await locationsOf(slug).all();
+    const claims = await claimsOf(slug).all();
 
-    const cast = await query<{
-      character_id: string; name: string; is_narrator: boolean;
-      wardrobe_classes: unknown; signature_item: string | null;
-    }>(`SELECT character_id, name, is_narrator, wardrobe_classes, signature_item
-          FROM characters WHERE build_id = $1 ORDER BY id`, [buildId]);
-
-    const locations = await query<{
-      location_id: string; name: string; tier: string; beat_count: number; ownership: string;
-    }>(`SELECT location_id, name, tier, beat_count, ownership FROM locations WHERE build_id = $1 ORDER BY id`,
-      [buildId]);
-
-    const claims = await query<{ text: string; tier: number; phrase_ref: string | null }>(
-      `SELECT text, tier, phrase_ref FROM claims WHERE build_id = $1 ORDER BY tier, id`, [buildId],
-    );
-
-    const declared = context.declared as { generic_class_pool?: unknown };
+    const declared = context.declared as { genericClassPool?: unknown };
 
     const { maps, usage } = await deriveMaps({
       phraseInventory: context.phraseInventory,
-      claims: claims.map((c) => ({ text: c.text, tier: c.tier, phraseRef: c.phrase_ref })),
-      cast: cast.map((c) => ({
-        characterId: c.character_id, name: c.name, isNarrator: c.is_narrator,
-        wardrobeClasses: c.wardrobe_classes, signatureItem: c.signature_item,
+      claims: claims.map((claim) => ({
+        text: claim.text, tier: claim.tier, phraseRef: claim.phraseRef ?? null,
       })),
-      genericClassPool: declared.generic_class_pool ?? {},
-      locations: locations.map((l) => ({
-        locationId: l.location_id, name: l.name, tier: l.tier,
-        beatCount: l.beat_count, ownership: l.ownership,
+      cast: cast.map((member) => ({
+        characterId: member.characterId,
+        name: member.name,
+        isNarrator: member.isNarrator,
+        wardrobeClasses: member.wardrobeClasses,
+        signatureItem: member.signatureItem,
+      })),
+      genericClassPool: declared.genericClassPool ?? {},
+      locations: locations.map((location) => ({
+        locationId: location.locationId,
+        name: location.name,
+        tier: location.tier,
+        beatCount: location.beatCount,
+        ownership: location.ownership,
       })),
       declared: context.declared,
       absorptionSummary: context.absorptionSummary,
-      onStage: (s) => void setStage(processId, s),
+      onStage: (stage) => void setStepStage(slug, 5, stage),
     });
 
     // The audits are recounted here rather than trusted. §14A and §27B both
     // require the check to travel with the deliverable.
-    const audits = auditMaps(maps, context.phraseInventory.map((p) => p.phraseId));
+    const audits = auditMaps(maps, context.phraseInventory.map((phrase) => phrase.phraseId));
 
-    await persistMaps(buildId, proc.id, maps, audits);
-    await finish(processId, usage);
+    await persistMaps(slug, maps, audits);
+    await finishStep(slug, 5, usage);
   } catch (error) {
-    await fail(processId, error);
+    await failStep(slug, 5, error);
     throw error;
   }
 }
 
 async function persistMaps(
-  buildId: number,
-  processId: number,
+  slug: string,
   maps: MapsOutput,
   audits: ReturnType<typeof auditMaps>,
 ): Promise<void> {
-  await transaction(async (db) => {
-    await db.query(`DELETE FROM act_map_rows WHERE build_id = $1`, [buildId]);
-    await db.query(`DELETE FROM capture_events WHERE build_id = $1`, [buildId]);
-    await db.query(`DELETE FROM story_days WHERE build_id = $1`, [buildId]);
+  await storyDaysOf(slug).replaceAll(maps.storyDays.map((day) => ({ ...day })));
+  await captureEventsOf(slug).replaceAll(maps.captureEvents.map((event) => ({ ...event })));
+  await actMapOf(slug).replaceAll(maps.actMap.map((row) => ({ ...row })));
 
-    for (const day of maps.storyDays) {
-      await db.query(
-        `INSERT INTO story_days (build_id, day, act, channel, subject, outfit, colour_family)
-         VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7)
-         ON CONFLICT (build_id, day, subject) DO NOTHING`,
-        [buildId, day.day, day.act, day.channel, day.subject, JSON.stringify(day.outfit), day.colourFamily],
-      );
-    }
+  // §27B's dispositions land on the phrase rows the inventory already holds.
+  const phrases = phrasesOf(slug);
+  for (const disposition of maps.dispositions) {
+    await phrases.patch(disposition.phraseId, {
+      disposition: disposition.disposition,
+      demo: disposition.demo ?? null,
+      blockedReason: disposition.blockedReason ?? null,
+    });
+  }
+
+  const { writeJson } = await import("@/store/json");
+  const { paths } = await import("@/store/paths");
+  // §21 and §14A: the wardrobe map ships with its audits, never without them.
+  await writeJson(paths(slug).wardrobeMap, {
+    storyDays: maps.storyDays,
+    captureEvents: maps.captureEvents,
+    wardrobeAudits: maps.wardrobeAudits,
+    independentAudits: audits,
+  });
+
+  // E3: `story_days{day → outfit_row}` and `capture_events{event_id → …}`, and
+  // one ledger row per beat so step 6 onward has somewhere to write.
+  await updateLedger(slug, (ledger) => {
+    for (const day of maps.storyDays) ledger.storyDays[day.day] = day;
 
     for (const event of maps.captureEvents) {
-      await db.query(
-        `INSERT INTO capture_events (build_id, event_id, story_day, location_id, visibility, alibi, beats)
-         VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)
-         ON CONFLICT (build_id, event_id) DO NOTHING`,
-        [buildId, event.eventId, event.storyDay, event.locationId, event.visibility, event.alibi, JSON.stringify(event.beats)],
-      );
+      ledger.captureEvents[event.eventId] = {
+        storyDay: event.storyDay,
+        locationId: event.locationId,
+        beats: event.beats,
+      };
     }
 
     for (const row of maps.actMap) {
-      await db.query(
-        `INSERT INTO act_map_rows
-           (build_id, beat_id, ordinal, act, phrase_ids, type, register, rig, frame_side, framing_step,
-            energy, valence, ownership, function, subject, alibi, location_id, story_day,
-            capture_event_id, sequence_id, geo_line_ref, wardrobe_ref, duration, product_state,
-            visibility, claims, plant_payoff, notes)
-         VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26::jsonb,$27,$28)
-         ON CONFLICT (build_id, beat_id) DO NOTHING`,
-        [
-          buildId, row.beatId, row.ordinal, row.act, JSON.stringify(row.phraseIds), row.type,
-          row.register, row.rig, row.frameSide, row.framingStep, row.energy, row.valence,
-          row.ownership, row.function, row.subject, row.alibi, row.locationId, row.storyDay,
-          row.captureEventId, row.sequenceId, row.geoLineRef, row.wardrobeRef, row.duration,
-          row.productState, row.visibility, JSON.stringify(row.claims), row.plantPayoff, row.notes,
-        ],
-      );
+      const existing = ledger.beats[row.beatId];
+      ledger.beats[row.beatId] = existing
+        ? { ...existing, phraseIds: row.phraseIds }
+        : blankBeat(row.beatId, row.phraseIds);
     }
-
-    // §27B's dispositions land on the phrase rows the inventory already holds.
-    for (const disposition of maps.dispositions) {
-      await db.query(
-        `UPDATE phrases SET disposition = $3, demo = $4, blocked_reason = $5
-          WHERE build_id = $1 AND phrase_id = $2`,
-        [buildId, disposition.phraseId, disposition.disposition, disposition.demo, disposition.blockedReason],
-      );
-    }
-
-    await db.query(
-      `INSERT INTO artifacts (build_id, process_id, kind, payload) VALUES ($1, $2, 'maps', $3::jsonb)`,
-      [buildId, processId, JSON.stringify({ ...maps, independentAudits: audits })],
-    );
   });
+
+  await putArtifact(slug, "maps", { ...maps, independentAudits: audits });
 }
 
-export { QUEUE_ABSORB_SCRIPT, QUEUE_CAST };
+function blankBeat(beatId: string, phraseIds: string[]) {
+  return {
+    beatId,
+    phraseIds,
+    t2iPromptPath: null,
+    t2iJobId: null,
+    t2iStatus: null,
+    t2iQa: {},
+    i2vPromptPath: null,
+    i2vJobId: null,
+    i2vStatus: null,
+    i2vQa: {},
+    retries: [],
+    attachments: [],
+    delivered: false,
+    reissueFlag: null,
+  };
+}

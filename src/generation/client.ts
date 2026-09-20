@@ -247,20 +247,40 @@ function extractUrls(record: Record<string, unknown>): string[] {
  * run on env vars alone while a team can connect a credential through the UI
  * without a redeploy.
  */
+/**
+ * A seam for substituting the transport.
+ *
+ * `--dry-run` needs a client that records calls and submits nothing, and the
+ * alternative — threading a flag through every step down to each call site —
+ * would put a branch in the production path for the sake of a rehearsal. This
+ * keeps the rehearsal entirely outside the steps.
+ */
+type ClientFactory = (provider: "higgsfield" | "kling") => Promise<GenerationClient>;
+
+let factoryOverride: ClientFactory | null = null;
+
+export function setGenerationClientFactory(factory: ClientFactory | null): void {
+  factoryOverride = factory;
+}
+
 export async function generationClient(provider: "higgsfield" | "kling" = "higgsfield"): Promise<GenerationClient> {
+  if (factoryOverride) return factoryOverride(provider);
+
   const { requireConnection } = await import("@/lib/connections");
   const connection = await requireConnection(provider);
 
   if (connection.kind === "cli") {
     throw new GenerationError(
       `The ${provider} connection is a CLI credentials file, which this worker cannot use directly. ` +
-        `Add an MCP or API connection in Settings for generation.`,
+        `Set HIGGSFIELD_MCP_URL / HIGGSFIELD_MCP_TOKEN (or the KLING_ pair) instead.`,
     );
   }
 
   const url = connection.config.url;
   if (!url) {
-    throw new GenerationError(`The ${provider} connection has no endpoint URL. Add one in Settings.`);
+    throw new GenerationError(
+      `The ${provider} connection has no endpoint URL. Set ${provider === "higgsfield" ? "HIGGSFIELD_MCP_URL" : "KLING_MCP_URL"}.`,
+    );
   }
 
   const token = "token" in connection.secret ? connection.secret.token

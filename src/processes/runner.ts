@@ -1,258 +1,183 @@
 /**
- * Runs a process row end to end: claim it, execute the step, persist its
- * artefacts, release it.
+ * Steps 1 and 2 — absorb the inspo video, absorb the script and product.
  *
- * Every state change goes through here rather than through the worker so the
- * two steps share one definition of what "running", "done" and "failed" mean,
- * and so the UI's progress column has a single writer.
+ * Every state change goes through here rather than through the caller so both
+ * steps share one definition of what "running", "done" and "failed" mean, and
+ * so the ledger has a single writer.
+ *
+ * §18 is explicit that neither step gates the other: "steps 1-5 ship as one
+ * delivery and nothing inside waits — the only gate in the build is step 6."
+ * Step 2 therefore reads step 1's sheet as context where it exists, and runs
+ * without it where it does not.
  */
 
-import { one, query, transaction } from "@/db/client";
-import { materialiseAsset, readAsset } from "@/lib/storage";
+import {
+  assetImage,
+  assetText,
+  claimStep,
+  failStep,
+  finishStep,
+  findAsset,
+  getArtifact,
+  listAssets,
+  putArtifact,
+  setStage as setStepStage,
+  updateLedger,
+} from "@/store";
+import { claims as claimsOf, locks as locksOf, phrases as phrasesOf } from "@/store/collections";
 import { absorbInspoVideo } from "./absorb-inspo";
 import { absorbScript } from "./absorb-script";
 import { part1Table } from "@/instruments";
 import type { AbsorptionSheet } from "./schemas";
 
-interface ProcessRow extends Record<string, unknown> {
-  id: number;
-  build_id: number;
-  step: number;
-  kind: string;
-  status: string;
-}
+/* ------------------------------------------------------------------ *
+ * Step 1 — absorb the inspo video
+ * ------------------------------------------------------------------ */
 
-interface AssetRow extends Record<string, unknown> {
-  id: number;
-  kind: string;
-  filename: string;
-  mime_type: string;
-  storage_path: string;
-  source_url: string | null;
-  text_content: string | null;
-}
-
-export async function setStage(processId: number, stage: string): Promise<void> {
-  await query("UPDATE processes SET stage = $2 WHERE id = $1", [processId, stage]);
-}
-
-/**
- * Move a process to `running`, but only from `queued`. The conditional update
- * is the lock: if two workers pick up the same job, exactly one sees a row
- * back and the other returns false and does nothing.
- */
-async function claim(processId: number): Promise<ProcessRow | undefined> {
-  return one<ProcessRow>(
-    `UPDATE processes
-        SET status = 'running', started_at = now(), stage = 'starting', error = NULL
-      WHERE id = $1 AND status = 'queued'
-      RETURNING *`,
-    [processId],
-  );
-}
-
-async function fail(processId: number, error: unknown): Promise<void> {
-  const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-  await query(
-    `UPDATE processes SET status = 'failed', error = $2, stage = 'failed', finished_at = now() WHERE id = $1`,
-    [processId, message.slice(0, 4000)],
-  );
-}
-
-async function assetsFor(buildId: number): Promise<AssetRow[]> {
-  return query<AssetRow>("SELECT * FROM assets WHERE build_id = $1 ORDER BY id", [buildId]);
-}
-
-async function saveArtifact(
-  buildId: number,
-  processId: number,
-  kind: string,
-  payload: unknown,
-): Promise<void> {
-  // One row per (build, kind): re-running a step replaces its artefact rather
-  // than accumulating versions the UI would then have to disambiguate.
-  await query(
-    `INSERT INTO artifacts (build_id, process_id, kind, payload)
-     VALUES ($1, $2, $3, $4::jsonb)`,
-    [buildId, processId, kind, JSON.stringify(payload)],
-  );
-}
-
-/* ------------------------------------------------------------------ */
-
-export async function runAbsorbInspo(processId: number): Promise<void> {
-  const proc = await claim(processId);
-  if (!proc) return;
+export async function runAbsorbInspo(slug: string): Promise<void> {
+  const claimed = await claimStep(slug, 1, "absorb_inspo", "ABSORB INSPO VIDEO");
+  if (!claimed) return;
 
   try {
-    const assets = await assetsFor(proc.build_id);
-    const video = assets.find((a) => a.kind === "inspo_video");
+    const video = await findAsset(slug, "inspo_video");
     if (!video) throw new Error("No inspo video in this build's bundle.");
 
-    // The instruments take a file path, so the asset is materialised — free
-    // on the filesystem driver, a temp download on S3. Cleanup is in a finally
-    // because a skipped one fills the worker's disk a job at a time.
-    const source = await materialiseAsset(video.storage_path);
-    let result;
-    try {
-      result = await absorbInspoVideo({
-        videoPath: source.path,
-        onStage: (stage) => void setStage(processId, stage),
-      });
-    } finally {
-      await source.cleanup();
-    }
-
-    await transaction(async (client) => {
-      await client.query(
-        `INSERT INTO artifacts (build_id, process_id, kind, payload) VALUES ($1, $2, 'measurements', $3::jsonb)`,
-        [proc.build_id, processId, JSON.stringify({
-          ...result.measurements,
-          part1Table: part1Table(result.measurements),
-        })],
-      );
-      await client.query(
-        `INSERT INTO artifacts (build_id, process_id, kind, payload) VALUES ($1, $2, 'absorption_sheet', $3::jsonb)`,
-        [proc.build_id, processId, JSON.stringify(result.sheet)],
-      );
-      await client.query(
-        `UPDATE processes SET status = 'done', stage = 'done', finished_at = now(), usage = $2::jsonb WHERE id = $1`,
-        [processId, JSON.stringify(result.usage)],
-      );
+    // The instruments take a path and the asset already is one — nothing is
+    // staged to a temporary file and nothing has to be cleaned up after.
+    const result = await absorbInspoVideo({
+      videoPath: video.path,
+      onStage: (stage) => void setStepStage(slug, 1, stage),
     });
+
+    await putArtifact(slug, "measurements", {
+      ...result.measurements,
+      part1Table: part1Table(result.measurements),
+    });
+    await putArtifact(slug, "absorption_sheet", result.sheet);
+    await finishStep(slug, 1, result.usage);
   } catch (error) {
-    await fail(processId, error);
+    await failStep(slug, 1, error);
     throw error;
   }
 }
 
-export async function runAbsorbScript(processId: number): Promise<void> {
-  const proc = await claim(processId);
-  if (!proc) return;
+/* ------------------------------------------------------------------ *
+ * Step 2 — absorb script, product, Product Sheet; lock mode and model
+ * ------------------------------------------------------------------ */
+
+export async function runAbsorbScript(slug: string): Promise<void> {
+  const claimed = await claimStep(
+    slug,
+    2,
+    "absorb_script",
+    await stepTwoLabel(slug),
+  );
+  if (!claimed) return;
 
   try {
-    const assets = await assetsFor(proc.build_id);
-
-    const script = assets.find((a) => a.kind === "script");
+    const script = await findAsset(slug, "script");
     if (!script) throw new Error("No script in this build's bundle.");
-    const scriptText = script.text_content
-      ?? (await readAsset(script.storage_path)).toString("utf8");
+    const scriptText = await assetText(script);
 
-    const sheetAsset = assets.find((a) => a.kind === "product_sheet");
-    const productSheetText = sheetAsset
-      ? sheetAsset.text_content ?? (await readAsset(sheetAsset.storage_path)).toString("utf8")
-      : null;
+    const sheetAsset = await findAsset(slug, "product_sheet");
+    const productSheetText = sheetAsset ? await assetText(sheetAsset) : null;
 
-    const toImage = async (a: AssetRow) => ({
-      filename: a.filename,
-      mediaType: a.mime_type,
-      base64: (await readAsset(a.storage_path)).toString("base64"),
-    });
-
-    const productImages = await Promise.all(assets.filter((a) => a.kind === "product").map(toImage));
+    const productImages = await Promise.all(
+      (await listAssets(slug, "product")).map(assetImage),
+    );
     const placementImages = await Promise.all(
-      assets.filter((a) => a.kind === "product_placement").map(toImage),
+      (await listAssets(slug, "product_placement")).map(assetImage),
     );
 
-    // Step 1's sheet, where it has run. §18 lets step 2 proceed without it —
-    // steps 1-5 ship as one delivery and nothing inside waits — so this is
-    // context, not a precondition.
-    const priorSheet = await one<{ payload: AbsorptionSheet }>(
-      `SELECT payload FROM artifacts
-        WHERE build_id = $1 AND kind = 'absorption_sheet'
-        ORDER BY created_at DESC LIMIT 1`,
-      [proc.build_id],
-    );
+    // Step 1's sheet, where it has run. §18 lets step 2 proceed without it, so
+    // this is context, not a precondition.
+    const priorSheet = await getArtifact<AbsorptionSheet>(slug, "absorption_sheet");
 
     const result = await absorbScript({
       scriptText,
       productSheetText,
       productImages,
       placementImages,
-      absorptionSheet: priorSheet?.payload ?? null,
-      onStage: (stage) => void setStage(processId, stage),
+      absorptionSheet: priorSheet ?? null,
+      onStage: (stage) => void setStepStage(slug, 2, stage),
     });
 
-    await persistScriptAbsorption(proc.build_id, processId, result.absorption, result.usage);
+    await persistScriptAbsorption(slug, result.absorption);
+    await finishStep(slug, 2, result.usage);
   } catch (error) {
-    await fail(processId, error);
+    await failStep(slug, 2, error);
     throw error;
   }
 }
 
+/**
+ * §18 step 2's label carries its `PRODUCT PLACEMENT` clause only when a
+ * placement reference is in the bundle.
+ *
+ * That is not cosmetic: with no worn-placement reference §9D blocks REVEAL
+ * beats until one exists, and the recorded label is the evidence of what the
+ * bundle actually held.
+ */
+async function stepTwoLabel(slug: string): Promise<string> {
+  const hasPlacement = (await listAssets(slug, "product_placement")).length > 0;
+  return hasPlacement
+    ? "ABSORB THIS SCRIPT, PRODUCT, PRODUCT PLACEMENT AND PRODUCT SHEET"
+    : "ABSORB THIS SCRIPT, PRODUCT AND PRODUCT SHEET";
+}
+
 async function persistScriptAbsorption(
-  buildId: number,
-  processId: number,
+  slug: string,
   absorption: Awaited<ReturnType<typeof absorbScript>>["absorption"],
-  usage: Awaited<ReturnType<typeof absorbScript>>["usage"],
 ): Promise<void> {
-  await transaction(async (client) => {
-    // Re-running step 2 replaces the inventory rather than appending to it;
-    // §27B requires contiguous P- numbering and a second run would break it.
-    await client.query("DELETE FROM phrases WHERE build_id = $1", [buildId]);
-    for (const row of absorption.phraseInventory) {
-      await client.query(
-        `INSERT INTO phrases (build_id, phrase_id, ordinal, text, structural_job, split_trigger, act)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [buildId, row.phraseId, row.ordinal, row.text, row.structuralJob, row.splitTrigger, row.actHint],
-      );
-    }
+  // Re-running step 2 replaces the inventory rather than appending to it;
+  // §27B requires contiguous P- numbering and a second run would break it.
+  await phrasesOf(slug).replaceAll(
+    absorption.phraseInventory.map((row) => ({ ...row })),
+  );
 
-    await client.query("DELETE FROM claims WHERE build_id = $1 AND resolved_at IS NULL", [buildId]);
-    for (const claim of absorption.claims) {
-      await client.query(
-        `INSERT INTO claims (build_id, text, tier, kind, source, qualification, phrase_ref)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [buildId, claim.text, claim.tier, claim.kind, claim.source, claim.qualification, claim.phraseRef],
-      );
-    }
+  await claimsOf(slug).replaceAll(absorption.claims.map((claim) => ({ ...claim })));
 
-    await client.query("DELETE FROM locks WHERE build_id = $1", [buildId]);
-    const lockRows: Array<[string, string, string, string | null]> = [
-      ["mode", absorption.modeLock.mode, "18A", absorption.modeLock.reason],
-      ...absorption.locks.map((l): [string, string, string, string | null] => [l.key, l.value, l.section, l.reason]),
-      ...absorption.modelRoutes.map((r): [string, string, string, string | null] => [
-        `model:${r.beatClass}`,
-        [r.model, r.variant, r.quality, r.resolution].filter(Boolean).join(" · "),
-        "18A",
-        r.reason,
-      ]),
-    ];
-    for (const [key, value, section, reason] of lockRows) {
-      // ON CONFLICT rather than a pre-check: the model can emit the same lock
-      // key twice (mode both in modeLock and locks), and the first wins.
-      await client.query(
-        `INSERT INTO locks (build_id, key, value, section, reason)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (build_id, key) DO NOTHING`,
-        [buildId, key, value, section, reason],
-      );
-    }
+  // The mode lock appears both in `modeLock` and, for some models, again in
+  // `locks`. First wins, which is what ON CONFLICT DO NOTHING did.
+  const lockRows = [
+    { key: "mode", value: absorption.modeLock.mode, section: "18A", reason: absorption.modeLock.reason ?? null },
+    ...absorption.locks.map((lock) => ({
+      key: lock.key, value: lock.value, section: lock.section, reason: lock.reason ?? null,
+    })),
+    ...absorption.modelRoutes.map((route) => ({
+      key: `model:${route.beatClass}`,
+      value: [route.model, route.variant, route.quality, route.resolution].filter(Boolean).join(" · "),
+      section: "18A",
+      reason: route.reason ?? null,
+    })),
+  ];
 
-    await client.query(
-      `INSERT INTO artifacts (build_id, process_id, kind, payload) VALUES ($1, $2, 'script_absorption', $3::jsonb)`,
-      [buildId, processId, JSON.stringify(absorption)],
-    );
+  const seen = new Set<string>();
+  await locksOf(slug).replaceAll(
+    lockRows.filter((row) => (seen.has(row.key) ? false : (seen.add(row.key), true))),
+  );
 
-    // §E3 build-level `declared{}`, written at step 2.
-    await client.query(
-      `UPDATE builds SET declared = $2::jsonb, updated_at = now() WHERE id = $1`,
-      [buildId, JSON.stringify({
-        mode: absorption.modeLock.mode,
-        hybrid_by_act: absorption.modeLock.hybridByAct,
-        model_lock: Object.fromEntries(
-          absorption.modelRoutes.map((r) => [r.beatClass, {
-            model: r.model, variant: r.variant, quality: r.quality, resolution: r.resolution,
-          }]),
-        ),
-        locks: Object.fromEntries(absorption.locks.map((l) => [l.key, l.value])),
-        placement: absorption.placementLock,
-      })],
-    );
+  await putArtifact(slug, "script_absorption", absorption);
 
-    await client.query(
-      `UPDATE processes SET status = 'done', stage = 'done', finished_at = now(), usage = $2::jsonb WHERE id = $1`,
-      [processId, JSON.stringify(usage)],
-    );
+  // E3's build-level `declared{}`, written at step 2.
+  await updateLedger(slug, (ledger) => {
+    ledger.declared = {
+      ...ledger.declared,
+      mode: absorption.modeLock.mode,
+      hybridByAct: absorption.modeLock.hybridByAct,
+      modelLock: Object.fromEntries(
+        absorption.modelRoutes.map((route) => [
+          route.beatClass,
+          {
+            model: route.model,
+            variant: route.variant ?? null,
+            quality: route.quality ?? null,
+            resolution: route.resolution ?? null,
+          },
+        ]),
+      ),
+      locks: Object.fromEntries(absorption.locks.map((lock) => [lock.key, lock.value])),
+      placement: absorption.placementLock,
+    };
   });
 }

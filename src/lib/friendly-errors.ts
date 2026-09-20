@@ -30,40 +30,40 @@ const RULES: Rule[] = [
   {
     match: /No Anthropic connection is configured|requireConnection.*anthropic|ConnectionMissingError.*anthropic/i,
     summary: "Anthropic is not connected, and every step needs it.",
-    fix: "Open Settings and connect Anthropic with an API key from console.anthropic.com.",
-    href: "/settings",
+    fix: "Set ANTHROPIC_API_KEY in your environment or .env — a key from console.anthropic.com.",
+    href: null,
   },
   {
     match: /No Higgsfield connection is configured|HIGGSFIELD_MCP_URL is not set/i,
     summary: "Higgsfield is not connected, so images cannot be generated.",
-    fix: "Open Settings and connect Higgsfield.",
-    href: "/settings",
+    fix: "Set HIGGSFIELD_MCP_URL and HIGGSFIELD_MCP_TOKEN in your environment or .env.",
+    href: null,
   },
   {
     match: /No ElevenLabs connection|ConnectionMissingError.*elevenlabs/i,
     summary: "ElevenLabs is not connected, so the voice cannot be cloned.",
-    fix: "Open Settings and connect ElevenLabs.",
-    href: "/settings",
+    fix: "Set ELEVENLABS_API_KEY in your environment or .env.",
+    href: null,
   },
   {
     match: /No HeyGen connection|ConnectionMissingError.*heygen/i,
     summary: "HeyGen is not connected, so avatar videos cannot be rendered.",
-    fix: "Open Settings and connect HeyGen.",
-    href: "/settings",
+    fix: "Set HEYGEN_API_KEY in your environment or .env.",
+    href: null,
   },
 
   // --- Credentials
   {
     match: /\b401\b|Unauthorized|invalid[_ ]api[_ ]key|authentication_error/i,
     summary: "A provider rejected the API key.",
-    fix: "The key is wrong, expired or revoked. Create a fresh one and re-save it in Settings.",
-    href: "/settings",
+    fix: "The key is wrong, expired or revoked. Create a fresh one and update your environment or .env.",
+    href: null,
   },
   {
     match: /\b403\b|Forbidden|permission/i,
     summary: "The API key was accepted but is not allowed to do this.",
     fix: "The key lacks permission, or the account does not have this feature enabled. Check the provider's dashboard.",
-    href: "/settings",
+    href: null,
   },
   {
     match: /credit balance|insufficient|quota|billing|payment required|\b402\b/i,
@@ -87,20 +87,20 @@ const RULES: Rule[] = [
   },
   {
     match: /Required instrument "(\w+)" is not on PATH|MissingInstrumentError/i,
-    summary: "A video tool is missing from the worker.",
-    fix: "The worker image is missing ffmpeg, tesseract or Whisper. Rebuild the worker from docker/worker.Dockerfile.",
+    summary: "A §42 Part 1 instrument is not installed.",
+    fix: "Install ffmpeg (which supplies ffprobe), tesseract and whisper, and make sure they are on PATH. Run `npm run ready` to see which are missing. Step 1 will not fall back to an estimate — \"a label is not a measurement\".",
     href: null,
   },
   {
     match: /ECONNREFUSED|ENOTFOUND|getaddrinfo|connect ETIMEDOUT/i,
     summary: "Could not reach a service over the network.",
-    fix: "Either the address is wrong or outbound internet is blocked from the worker. Check the connection's URL in Settings.",
-    href: "/settings",
+    fix: "Either the address is wrong or outbound internet is blocked. Check the provider URL in your environment or .env.",
+    href: null,
   },
   {
     match: /no space left on device|ENOSPC/i,
-    summary: "The worker has run out of disk space.",
-    fix: "Clear old builds, or give the worker a larger disk.",
+    summary: "The disk is full.",
+    fix: "Clear old builds under builds/, or free space.",
     href: null,
   },
 

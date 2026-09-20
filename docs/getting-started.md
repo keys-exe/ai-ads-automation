@@ -1,91 +1,121 @@
 # Getting started
 
-No technical background needed. The app tells you what is missing and what to
-do about it — this is the same thing in writing.
+No technical background assumed. Three things to do once, then one command per
+build.
 
-## The short version
+## 1. Install
 
-1. Open **`/setup`**. It lists everything the pipeline needs and marks what is
-   missing.
-2. Fix whatever it says, in the order it says.
-3. Make a build, upload your files, press the step buttons in order.
+```bash
+npm install
+```
 
-`/setup` always shows a **Do this next** box. If you only ever read one thing,
-read that.
+You also need three command-line tools for step 1: **ffmpeg**, **tesseract**
+and **whisper**. §42 Part 1 measures the reference video with real instruments
+before anything is interpreted — "a label is not a measurement" — so without
+them step 1 stops and names the one that is missing rather than guessing.
 
-## What the five connections are for
+On a Mac: `brew install ffmpeg tesseract && pip install openai-whisper`.
+Or build the image that has all three:
+`docker build -f docker/instruments.Dockerfile -t ai-ads .`
 
-You connect these once, in **Settings**. Each has a **Test** button that makes
-a free, read-only call so you know it works before you rely on it.
+## 2. Add your keys
 
-| | What it does | Needed for |
-|---|---|---|
-| **Anthropic** | The thinking behind every step | **Everything** |
-| **Higgsfield** | Generates images | Steps 3 and 4 |
-| **ElevenLabs** | Clones a voice, speaks the script | The voice route |
-| **HeyGen** | Makes the talking-head videos | The voice route |
-| **Kling** | Video generation | Nothing yet — safe to connect early |
+```bash
+cp .env.example .env
+```
 
-Anthropic is the one people miss, because it is not a media company. Without
-it nothing runs at all.
+Fill in two to start:
 
-## What each step costs
+- **`ANTHROPIC_API_KEY`** — every step is a model call. Key from
+  console.anthropic.com.
+- **`HIGGSFIELD_MCP_URL`** and **`HIGGSFIELD_MCP_TOKEN`** — image generation,
+  needed from step 3 onward.
 
-Shown on every button before you press it. Roughly, per build:
+The ElevenLabs, HeyGen and Kling entries are for the voice, avatar and video
+routes, which are not wired yet. Leave them blank.
 
-| Step | Cost |
-|---|---|
-| 1 — absorb the reference video | ~$0.30, no image credits |
-| 2 — absorb the script | ~$0.30, no image credits |
-| 3 — cast the characters | Anthropic + Higgsfield credits |
-| 4 — property and locations | Anthropic + Higgsfield credits |
-| 5 — act map and wardrobe | ~$0.25, no image credits |
-| Voice route | ElevenLabs + HeyGen, **the expensive part** |
+Then check:
 
-**Steps 1 and 2 cost about sixty cents and spend no image or video credits.**
-Run those first on any new deployment: they prove the whole thing works —
-uploads, the database, the video tools, the model — before anything expensive
-happens.
+```bash
+npm run ready
+```
 
-The genuinely expensive part is HeyGen, at roughly $4–5 per minute of finished
-video. A 60–90 second ad is about $5–8 in avatar renders, which is several
-times the cost of everything else put together.
+It lists what is missing, what each missing thing blocks, and what to do about
+it. Nothing else will make more sense until this is clean.
 
-## Doing a build
+## 3. Make a build
 
-1. **Builds → Create build.** Give it a name.
-2. **Upload the bundle.** Five boxes, filled once:
-   - **Inspo video** — the ad you want to beat. File or a link.
-   - **Script** — what the presenter says.
-   - **Product** — photos of the product.
-   - **Product Sheet** — optional. Written for you if you do not have one.
-   - **Product placement** — optional. A photo of the product being worn.
-3. **Press the steps in order.** 1, then 2, then 3. Steps 4 and 5 start
-   themselves once 3 finishes.
+Create a folder and put everything in it. One drop, mixed files, no form.
 
-You can leave the page. Work carries on in the background and the page picks
-up where it left off.
+```bash
+mkdir -p builds/my-ad/inbox
+cp ~/Downloads/reference-ad.mp4  builds/my-ad/inbox/
+cp ~/Downloads/script.md         builds/my-ad/inbox/
+cp ~/Downloads/product-sheet.md  builds/my-ad/inbox/
+cp ~/Downloads/hero.jpg          builds/my-ad/inbox/
+mkdir -p builds/my-ad/inbox/placement
+cp ~/Downloads/on-wrist.jpg      builds/my-ad/inbox/placement/
+```
 
-## When something fails
+**Only the script is required.** The Product Sheet is created if you do not
+supply one. The placement folder is optional — but with no worn-placement
+reference, §9D blocks REVEAL beats until you add one, and the run says so.
 
-The failure is shown as a sentence and a fix, not an error code. For example:
+Then:
 
-> **Anthropic is not connected, and every step needs it.**
-> Open Settings and connect Anthropic with an API key from console.anthropic.com.
+```bash
+npm run build:run -- my-ad
+```
 
-The original technical message is still there under **Technical detail** if
-you want it, or want to send it to someone.
+It classifies the folder, prints what it found, and runs steps 1 through 5
+without stopping. If it cannot place a file it says which and why, and stops —
+rename the file, or list it in `builds/my-ad/inbox/bundle.json`.
 
-## The things that actually go wrong
+### Rehearse it first
 
-**"Not ready yet" on the Builds page.** Something required is not connected.
-Open `/setup`; it names it.
+```bash
+npm run build:run -- my-ad --no-generate
+```
 
-**A step sits at "queued" and never moves.** The worker is not running. On
-Railway, check the worker service is deployed and has not crashed.
+Every generation call is assembled and printed with its model and parameters,
+and none is submitted — so you can see the shape of the build before spending
+image credits. The model calls still run; this rehearses the generation spend,
+not the whole build.
 
-**"A provider rejected the API key."** The key is wrong, expired, or was
-copied with a space. Make a new one and re-save it.
+## 4. Look at what came out
 
-**"The provider account has run out of credit."** Nothing is broken — top up
-with that provider and press the step again.
+```bash
+npm run build:status -- my-ad     # counts, locks, what needs a human
+npm run deliver     -- my-ad      # then open the file it prints
+```
+
+`deliver` writes a set of HTML pages to `builds/my-ad/deliveries/`. Open
+`index.html` from disk — they are ordinary files and work with no internet.
+
+## What it costs
+
+Step 1 and step 2 are model calls only. **Step 3 is the first step that spends
+image credits** — it generates a reference sheet for everyone who appears in two
+or more beats. Step 4 generates one property plate per dwelling and one scene
+plate per PLATED location. Volume depends on your script.
+
+## What it does not do yet
+
+Steps 6, 7 and 8 — the hooks gate, B-roll and body acts, and the CapCut block.
+Those are the steps that produce the finished beats and the edit. The voice and
+avatar route is written but not wired in.
+
+So today you get: the absorption of your reference, the locks, the cast with
+their sheets, the property and locations with their plates, and the act map with
+its coverage ledger. Not a finished video.
+
+## If something goes wrong
+
+Every failure is reported in plain language with the fix attached. The build
+records where it stopped, so fix the cause and resume:
+
+```bash
+npm run build:run -- my-ad --from 3
+```
+
+Nothing is recomputed that already succeeded.

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(npm run ready)",
+      "Bash(npm run build:run:*)",
+      "Bash(npm run build:status:*)",
+      "Bash(npm run deliver:*)",
+      "Bash(npm run standards:lint)",
+      "Bash(npm run typecheck)",
+      "Bash(npm test)",
+      "Bash(npm install)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/standards-lint.sh",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}

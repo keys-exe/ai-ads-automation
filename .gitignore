@@ -1,9 +1,16 @@
 node_modules/
-.next/
-out/
 .env
 .env.local
 *.tsbuildinfo
-next-env.d.ts
 src/standards/generated/
-storage/
+
+# A build's artefacts are tracked on purpose — E9 designed the tree so §34
+# global corrections, coverage diffs and reissue passes run as scripts over it,
+# and a diff of act_map.json between two runs is worth reading.
+#
+# What is NOT tracked: the bundle the operator dropped in, the media the
+# platform returned, and the rendered HTML. All three are large, all three are
+# reproducible, and none of them is the record.
+builds/*/inbox/
+builds/*/media/
+builds/*/deliveries/

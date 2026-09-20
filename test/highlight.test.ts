@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { highlight, highlightProse, highlightJson, promptCharCount } from "../src/components/highlight";
+import { highlight, highlightProse, highlightJson, promptCharCount } from "../src/delivery/highlight";
 
 /*
  * §16A states the highlight rules precisely enough to test, and says outright

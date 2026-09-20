@@ -1,25 +1,36 @@
 # AI Ads Build Pipeline
 
-An executable implementation of the **Global Standards V7.51.3** build order.
+An executable implementation of the **Global Standards V7.51.3** build order,
+run from the command line and from Claude Code. No server, no database.
 
-Steps 1–5 of the §18 eight-step flow. The bundle is uploaded once; every step
-reads from it.
+Drop a bundle in a folder, run one command, and §18 steps 1–5 flow through
+without stopping.
+
+```bash
+mkdir -p builds/my-ad/inbox
+cp reference.mp4 script.md product-sheet.md hero.jpg builds/my-ad/inbox/
+npm run build:run -- my-ad
+npm run deliver  -- my-ad          # then open the file it prints
+```
 
 ## What runs
 
-| Step | Button | Produces |
-|---|---|---|
-| 1 | `ABSORB INSPO VIDEO` | The Absorption Sheet — §42's seven parts |
-| 2 | `ABSORB THIS SCRIPT, PRODUCT[, PRODUCT PLACEMENT] AND PRODUCT SHEET` | §27B phrase inventory, §43A claims pass, §18A Mode & Model Lock, the remaining step-2 locks |
-| 3 | `CAST — GENERATE REFERENCE SHEETS` | §19 sheets for everyone with 2+ beats, §19A axis tables, §22D voices, §20 constraint sheets |
-| 4 | *(automatic)* | Property Sheet + plate, the eight-channel location pass, five-part Location Sheets, scene plates |
-| 5 | *(automatic)* | Story days, the wardrobe ledger with its four audits, the act map, the coverage ledger |
+| Step | Produces |
+|---|---|
+| 1 | The Absorption Sheet — §42's seven parts, over real instrument measurements |
+| 2 | §27B phrase inventory, §43A claims pass, §18A Mode & Model Lock, the remaining step-2 locks |
+| 3 | §19 sheets for everyone with 2+ beats, §19A axis tables, §22D voices, §20 constraint sheets |
+| 4 | Property Sheet + plate, the eight-channel location pass, five-part Location Sheets, scene plates |
+| 5 | Story days, the wardrobe ledger with its four audits, the act map, the coverage ledger |
+
+**Steps 6–8 are not built** — the hooks gate, B-roll and body acts, and the
+CapCut block. Neither is I2V routing to Kling, Wan or Seedance. Those are the
+steps that deliver finished video.
 
 ## The chain
 
-Steps 3, 4 and 5 run as one pass. §18: *"Steps 3, 4 and 5 send their artefact
-and continue in the same pass — a handoff, not an approval. The only gate in
-the build is step 6."* Starting the cast runs the rest without another click.
+§18: *"Steps 3, 4 and 5 send their artefact and continue in the same pass — a
+handoff, not an approval. The only gate in the build is step 6."*
 
 ```
 step 3  cast ──▶ sheets generated ──▶ §19 panel check ──▶ locked
@@ -34,26 +45,87 @@ step 5  ◀───────────────────────
         story days ──▶ wardrobe ledger ──▶ act map ──▶ coverage ledger
 ```
 
+Steps 1 and 2 gate nothing and are gated by nothing. A step-1 failure is
+recorded and step 2 runs anyway — "steps 1–5 ship as one delivery and nothing
+inside waits."
+
 The property plate is a hard internal gate. §30G: *"generated and checked
 first, before any location plate is built against it."* A room whose dwelling's
 plate failed is **held**, not generated against nothing — that is the "six
 houses" failure the section exists to prevent, and it would be invisible in the
 output.
 
-Step 3 is the first step that spends credits, which is why it is the one a
-person starts rather than firing off step 2.
+## Commands
 
-## Who checks the visual gates
+| Command | What it does |
+|---|---|
+| `npm run ready` | Credentials and §42 instruments, with what each missing one blocks |
+| `npm run build:run -- <slug>` | Classify the inbox and run steps 1–5 |
+| `npm run build:run -- <slug> --no-generate` | Assemble and log every call, submit none |
+| `npm run build:run -- <slug> --from 4` | Resume at a step |
+| `npm run build:run -- <slug> --only 4` | Run one step and do not carry on |
+| `npm run build:status -- <slug>` | Where the build stands, from `run_ledger.json` |
+| `npm run deliver -- <slug>` | Render the §16A deliverables as local HTML |
+| `npm run standards:lint` | E10 doc-lint; exits non-zero on any error |
+| `npm test` | 108 tests, including the §16A conformance set |
 
-E1 marks §19's panel check and §30G's plate check **HUMAN**. Running them
-automatically is a deliberate deviation, taken so the chain completes
-unattended, and it is bounded:
+From Claude Code: `/build`, `/status`, `/deliver` and `/correct`, routed by the
+`ad-build` skill in `.claude/skills/`.
 
-- An automatic **fail** is authoritative — it triggers a reroll inside E2's
-  two-attempt budget, which beats shipping a bad sheet.
-- An automatic **pass** is not. The artefact locks so the chain proceeds, and
-  `humanReviewPending` stays true. Nothing is ever recorded as human-checked
-  when it was not.
+## The intake
+
+One folder, mixed files, no form.
+
+```
+builds/<slug>/inbox/
+  anything.mp4          → inspo_video
+  script.md             → script                (required)
+  product-sheet.md      → product_sheet         (optional — created where absent)
+  product-sheet.py      → the Appendix B .py companion
+  *.jpg *.png           → product
+  placement/*.jpg       → product_placement     (optional)
+  bundle.json           → explicit manifest, wins outright
+```
+
+Extension decides the class, name decides the role. A file it cannot place is
+**reported and the run stops** — §18 step 2's verification depends on the bundle
+being what it claims, and a wrong guess is invisible until beat forty.
+
+## State: the E9 tree, not a database
+
+Appendix E9 specifies the layout and says why: *"one beat, one pair of files, so
+§34 global corrections, coverage diffs and reissue passes run as scripts over
+the tree, never as memory."*
+
+```
+builds/<slug>/
+  bundle.json  build.json  run_ledger.json
+  phrase_inventory.json  act_map.json  wardrobe_map.json
+  registries/{roster,scene}.json   location_sheets/
+  collections/{claims,locks,properties,story_days,capture_events,generation_jobs}.json
+  artifacts/{measurements,absorption_sheet,script_absorption,cast,locations,maps}.json
+  beats/{BEAT-ID}.t2i.txt   deliveries/*.html
+```
+
+`run_ledger.json` is Appendix E3, verbatim — per-beat rows plus build-level
+`property`, `plates`, `subjects`, `story_days`, `capture_events`, `declared`
+and `version_built_against`. E3: *"computed, never hand-maintained."* It is
+also what `--from` resumes off.
+
+Artefacts are tracked in git; the inbox, returned media and rendered HTML are
+not.
+
+## Delivery — §16A on a local file
+
+§16A requires every deliverable to arrive on an interactive widget, and fixes
+the carousel at implementation depth: *"a batch that deviates from it is a §34
+correction, not a style preference."*
+
+`npm run deliver` writes self-contained HTML to `builds/<slug>/deliveries/` —
+the four widget shapes, the locked carousel, the six highlight colours in both
+modes, counts computed from the exact string the copy button holds, and copy
+that lifts raw text so colour never reaches the clipboard. Nothing in them
+reaches the network.
 
 ## Prompt assembly
 
@@ -64,87 +136,33 @@ paraphrases them, and every paraphrase is a silent trim of a tested string.
 
 So the model supplies only the **fills**, and `src/generation/assemble.ts`
 pastes the locked blocks around them in the assembly order the section states.
-`assembleAvatarSheet` and the two plate assemblers are tested against the
-document's own never-trimmed clauses.
-
-One wrinkle worth knowing: the same slot is spelled four different ways across
-the library — `[SKIRTING]` in `PLATE-PROP`, `[SKIRTING — profile, height,
-colour]` in `PROP-SHELL`, `[RADIATOR]` against `[RADIATOR TYPE]`. E5 treats
-those as one slot with one source, so the matcher resolves exact → head term →
-word prefix rather than making callers reproduce every spelling.
-
-The step-2 label carries its `PRODUCT PLACEMENT` clause only when a placement
-reference is in the bundle. That is not a UI detail: with no worn-placement
-reference, §9D blocks REVEAL beats until one exists, and the stored label is
-the record of what the bundle actually held.
-
-Neither step gates the other. §18 is explicit that steps 1–5 ship as one
-delivery and nothing inside waits — "the only gate in the build is step 6."
 
 ## The measurement split
 
 §42 Part 1 says objective instruments run before any creative interpretation,
-and that "a label is not a measurement." So the model never estimates a number
-it could have measured:
+and that *"a label is not a measurement."*
 
 | Instrument | Tool | Settles |
 |---|---|---|
 | Duration, aspect, resolution | `ffprobe` | Format lock inputs (§3) |
 | Scene-change detection | `ffmpeg` scene filter | Shot count, mean shot length, cut rhythm |
 | Silence detection, two thresholds | `ffmpeg` silencedetect | Whether held beats exist, and where |
-| Volume statistics | `ffmpeg` volumedetect + ebur128 | VO register — normalised-hot vs dynamic |
-| Luminance timeline | `ffmpeg` signalstats | Register changes, act boundaries, the §15 delta achieved |
+| Volume statistics | `ffmpeg` volumedetect + ebur128 | VO register |
+| Luminance timeline | `ffmpeg` signalstats | Register changes, act boundaries, the §15 delta |
 | OCR pass | `tesseract` | Text-overlay inventory — everything that is post (§17) |
 | Transcript | Whisper | The Part 4 script absorption input |
 
-One Part 1 row is deliberately *not* measured. The TH/B-roll ratio needs a
-per-shot judgement no filter settles, so it is derived by the model from
-sampled shot frames and marked `derived` — §45 forbids an unmarked derived
-claim sitting beside a measured one.
+One Part 1 row is deliberately *not* measured: the TH/B-roll ratio needs a
+per-shot judgement no filter settles, so it is derived and **marked derived** —
+§45 forbids an unmarked derived claim sitting beside a measured one.
 
-## Architecture
-
-```
-Next.js (web)  ──enqueue──▶  pg-boss (Postgres)  ──▶  worker
-      │                                                  │
-      │                                   instruments (ffmpeg/tesseract/whisper)
-      │                                   Claude API (claude-opus-5)
-      │                                   Higgsfield MCP (image generation)
-      │                                                  │
-      └──────────── Postgres ◀── artefacts ◀─────────────┘
-```
-
-### Three constraints the MCP schemas carry that E7's templates do not
-
-E7 records the call templates but not the tool limits. Each of these breaks a
-naive implementation:
-
-1. **`generate_image_batch` takes at most 12 requests.** A build with twenty
-   locations is several batches, and indices must stay stable across them or
-   the manifest stops matching the payload (§16B).
-2. **`jobs_wait` takes at most 12 jobs and long-polls for at most 15 seconds.**
-   E7's *"jobs_wait on every T2I before its I2V"* is a poll loop, not one call.
-3. **`medias[].value` must be a media UUID or a prior job_id** — an https URL
-   is rejected.
-
-A fourth is worse than an error because it is silent: **omitting `use_unlim`
-makes the server return an `unlim_choice` question and submit nothing.**
-`buildImageCall` always sets it explicitly, along with `quality`, `resolution`
-and — on GPT Image — `variant: sunburst`, because the catalogue defaults are
-`low`, `1k` and the retired `flare`.
-
-### Model routing on this connector
+## Model routing on this connector
 
 `nano_banana_pro` does not survive the connector: two submissions, different
 prompts, different batches, both completed logging `nano_banana_2`
-(`docs/measurements.md` M1, M4). §44.47 makes the logged model the evidence,
-so every route to it fails verification. Nothing is routed there, and a test
+(`docs/measurements.md` M1, M4). §44.47 makes the logged model the evidence, so
+every route to it fails verification. Nothing is routed there, and a test
 enforces that rather than leaving it to a comment.
-
-`gpt_image_2_5` Sunburst verifies cleanly and cleared §18A's two-part bar on a
-side-by-side, so it takes the typed and face classes the standard already
-listed it against. Mechanism beats stay on Nano Banana regardless — §18A
-confines them by classifier threshold, not by output quality.
 
 | Beat class | Route |
 |---|---|
@@ -154,9 +172,17 @@ confines them by classifier threshold, not by output quality.
 | Volume B-roll, property and location plates | `nano_banana_2` |
 | Mechanism A–C | `nano_banana_2` — classifier threshold, never GPT Image |
 
-The worker is a separate process because the instruments are minutes of work
-that no HTTP request should hold open. It is also the only container that needs
-ffmpeg, tesseract and Whisper — see `docker/worker.Dockerfile`.
+## Where this departs from the document
+
+Recorded rather than applied quietly (§45), and written into every build's
+ledger under `declared.overrides`. Full list:
+`.claude/skills/ad-build/references/deviations.md`.
+
+The short version: the deliverable here is media rather than copy-ready prompts
+(§1, operator's decision); §19's panel check and §30G's plate check run
+automatically although E1 marks them HUMAN (bounded — an automatic **pass**
+never records as human-checked); and §5's standing rule caps what can run
+unattended at all.
 
 ## The standards store
 
@@ -169,65 +195,38 @@ The document is committed at `standards/V7.51.3.md` and parsed into two stores:
 
 The assembled prefix is identical across every run of a given process, so it
 carries a 1-hour cache breakpoint and is read at ~0.1× after the first call.
-Build-specific content always goes *after* the breakpoint.
 
 ### Doc-lint
 
-Appendix E10 defines a standing pre-cut check list and says "a cut failing lint
-does not ship." `npm run standards:lint` runs the computable ones:
+E10 defines a standing pre-cut check list and says *"a cut failing lint does not
+ship."* `npm run standards:lint` runs the computable ones:
 
 ```
 doc-lint: 24 errors, 34 warnings
 ```
 
 Those errors are real and they are in the document, not the parser — see
-`docs/doc-lint-findings.md`.
+`docs/doc-lint-findings.md`. The baseline must not grow.
 
-## New here?
-
-[`docs/getting-started.md`](docs/getting-started.md) — what to connect, what
-each step costs, and how to run a build. No technical background assumed. The
-app's own `/setup` page says the same thing and keeps it current.
-
-## Deploying
-
-`docker compose up -d --build` brings up Postgres, the web app and the worker.
-Full guide, including the two things that break deployments quietly, in
-[`docs/deploying.md`](docs/deploying.md).
-
-## Local setup
+## Setup
 
 ```bash
 npm install
-cp .env.example .env.local        # set DATABASE_URL and ANTHROPIC_API_KEY
-npm run db:migrate
-npm run user -- you@example.com "Your Name" <password>
-
-npm run dev                        # web
-npm run worker                     # worker, in a second terminal
+cp .env.example .env        # ANTHROPIC_API_KEY, then HIGGSFIELD_MCP_URL for step 3+
+npm run ready               # says what is missing and what it blocks
 ```
 
-The worker needs `ffmpeg`, `tesseract` and `whisper` on PATH. Without them,
-step 1 fails immediately with a named missing instrument rather than silently
-falling back to an estimate.
+Step 1 needs `ffmpeg`, `tesseract` and `whisper` on PATH. Without them it fails
+with a named missing instrument rather than silently falling back to an
+estimate. `docker/instruments.Dockerfile` builds an image that has all three.
 
-## Commands
+## `legacy/`
 
-| Command | What it does |
-|---|---|
-| `npm run dev` | Web app |
-| `npm run worker` | Background worker |
-| `npm run db:migrate` | Apply `src/db/schema.sql` (idempotent) |
-| `npm run standards:lint` | E10 doc-lint; exits non-zero on any error |
-| `npm test` | Unit tests, including the §16A highlight rules |
-| `npm run user -- <email> "<name>" <password>` | Add or update a team member |
+The previous Next.js + Postgres + pg-boss surface — web app, API routes, auth,
+the encrypted connections table, the worker, and the voice/avatar runner. It is
+kept only so nothing is lost in the move and is excluded from the TypeScript
+program. Delete it when you are satisfied: `git rm -r legacy`.
 
-## What is not here yet
-
-Steps 6–8: the hooks gate (the build's only real gate), B-roll and body acts,
-and the CapCut block. Those are the steps that deliver beat prompts, so they
-are also where the §16A prompt-widget carousel and the I2V routing to Kling,
-Wan and Seedance arrive.
-
-The §16A delivery surface is present as tokens, the highlight-by-rule pass and
-a Navigator.
+The ElevenLabs and HeyGen adapters were **not** moved there — they are live in
+`src/providers/`, awaiting the Phase 2 wiring, and both are marked unverified
+against live docs.

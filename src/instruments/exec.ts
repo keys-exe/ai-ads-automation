@@ -6,7 +6,7 @@ const execFileAsync = promisify(execFile);
 export class MissingInstrumentError extends Error {
   constructor(public readonly binary: string) {
     super(
-      `Required instrument "${binary}" is not on PATH. §42 Part 1 runs objective instruments before any interpretation — the step cannot fall back to an estimate. Install it in the worker image.`,
+      `Required instrument "${binary}" is not on PATH. §42 Part 1 runs objective instruments before any interpretation — the step cannot fall back to an estimate. Install it and put it on PATH — "npm run ready" lists which are missing.`,
     );
     this.name = "MissingInstrumentError";
   }
