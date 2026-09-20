@@ -1,0 +1,170 @@
+/*
+ * §16A Delivery Surface Standard — the locked token set.
+ *
+ * The six highlight colours are quoted from §16A's colour table and are never
+ * written inline. Dark values are declared under BOTH :root[data-mode="dark"]
+ * and @media (prefers-color-scheme: dark), so the card flips with the host
+ * rather than with a guess about it.
+ */
+
+:root {
+  --surface-0: #FBFAF8;
+  --surface-1: #F3F1ED;
+  --surface-2: #FFFFFF;
+  --bg-neutral: #EEECE7;
+
+  --border: #DAD7CF;
+  --border-stronger: #BEBAB0;
+  --border-accent: #8C7CE8;
+  --fill-accent: #534AB7;
+
+  --text-primary: #1F1E1B;
+  --text-secondary: #5F5E5A;
+  --text-muted: #8C8A83;
+
+  /* §16A colour scheme — locked, light */
+  --hl-json-key: #534AB7;
+  --hl-string-value: #0F6E56;
+  --hl-exact-word: #185FA5;
+  --hl-punctuation: #5F5E5A;
+  --hl-prose-header: #854F0B;
+  --hl-negatives: #A32D2D;
+
+  --radius: 6px;
+
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --font-voice: Georgia, "Iowan Old Style", "Times New Roman", serif;
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+:root[data-mode="dark"] {
+  --surface-0: #16150F;
+  --surface-1: #1F1E18;
+  --surface-2: #26251E;
+  --bg-neutral: #2E2D25;
+
+  --border: #3A382F;
+  --border-stronger: #55534A;
+  --border-accent: #7A6FD0;
+  --fill-accent: #AFA9EC;
+
+  --text-primary: #F2F0E9;
+  --text-secondary: #B4B2A9;
+  --text-muted: #86847C;
+
+  /* §16A colour scheme — locked, dark */
+  --hl-json-key: #AFA9EC;
+  --hl-string-value: #9FE1CB;
+  --hl-exact-word: #85B7EB;
+  --hl-punctuation: #B4B2A9;
+  --hl-prose-header: #FAC775;
+  --hl-negatives: #F09595;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-mode="light"]) {
+    --surface-0: #16150F;
+    --surface-1: #1F1E18;
+    --surface-2: #26251E;
+    --bg-neutral: #2E2D25;
+
+    --border: #3A382F;
+    --border-stronger: #55534A;
+    --border-accent: #7A6FD0;
+    --fill-accent: #AFA9EC;
+
+    --text-primary: #F2F0E9;
+    --text-secondary: #B4B2A9;
+    --text-muted: #86847C;
+
+    --hl-json-key: #AFA9EC;
+    --hl-string-value: #9FE1CB;
+    --hl-exact-word: #85B7EB;
+    --hl-punctuation: #B4B2A9;
+    --hl-prose-header: #FAC775;
+    --hl-negatives: #F09595;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--surface-0);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: inherit; }
+
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* --- §16A widget primitives ------------------------------------------- */
+
+.card {
+  background: var(--surface-2);
+  border: 0.5px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+}
+
+/* "Status is a badge, not a sentence." */
+.badge {
+  display: inline-block;
+  background: var(--bg-neutral);
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: var(--radius);
+  white-space: nowrap;
+  font-family: var(--font-ui);
+}
+.badge[data-tone="error"]   { color: var(--hl-negatives); }
+.badge[data-tone="ok"]      { color: var(--hl-string-value); }
+.badge[data-tone="warn"]    { color: var(--hl-prose-header); }
+.badge[data-tone="accent"]  { color: var(--fill-accent); }
+
+pre.prompt {
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--surface-1);
+  padding: 12px;
+  border-radius: var(--radius);
+  margin: 0;
+}
+
+/* §16A highlight classes. Applied by rule at render time, never by hand. */
+.hl-key        { color: var(--hl-json-key); }
+.hl-value      { color: var(--hl-string-value); }
+.hl-exact      { color: var(--hl-exact-word); }
+.hl-punct      { color: var(--hl-punctuation); }
+.hl-caps       { color: var(--hl-prose-header); }
+.hl-negatives  { color: var(--hl-negatives); }
+
+/* Spec card: labelled rows, values right. Never a wall of prose. */
+.spec-row {
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 7px 0;
+  border-bottom: 0.5px solid var(--border);
+}
+.spec-row:last-child { border-bottom: 0; }
+.spec-label { color: var(--text-secondary); font-size: 14px; }
+.spec-value { text-align: right; font-size: 14px; }
+.spec-value.mono { font-family: var(--font-mono); font-size: 13px; }
