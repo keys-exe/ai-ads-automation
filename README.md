@@ -183,7 +183,13 @@ doc-lint: 24 errors, 34 warnings
 Those errors are real and they are in the document, not the parser — see
 `docs/doc-lint-findings.md`.
 
-## Setup
+## Deploying
+
+`docker compose up -d --build` brings up Postgres, the web app and the worker.
+Full guide, including the two things that break deployments quietly, in
+[`docs/deploying.md`](docs/deploying.md).
+
+## Local setup
 
 ```bash
 npm install

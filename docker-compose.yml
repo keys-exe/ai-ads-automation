@@ -1,0 +1,92 @@
+# The whole stack: Postgres, the web app, and the worker.
+#
+# Two things here are load-bearing rather than conventional:
+#
+#   1. web and worker SHARE the storage volume. The web process writes the
+#      upload bundle; the worker reads those files by path. Give them separate
+#      volumes and every job fails on a missing file that the UI insists it
+#      uploaded.
+#
+#   2. Migrations run as a one-shot service that both others wait on, rather
+#      than in an entrypoint. Two replicas racing the same CREATE TABLE is a
+#      confusing first failure on a fresh deployment.
+
+name: ai-ads-pipeline
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ads}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_ads}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # Without this, the migrate service starts against a database that is
+      # listening but not yet accepting connections.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ads} -d ${POSTGRES_DB:-ai_ads}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
+  migrate:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    command: ["npx", "tsx", "scripts/migrate.ts"]
+    environment:
+      DATABASE_URL: &database_url postgres://${POSTGRES_USER:-ads}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ai_ads}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: *database_url
+      # Required before Settings will store any credential. Generate with:
+      #   openssl rand -base64 32
+      SETTINGS_ENCRYPTION_KEY: ${SETTINGS_ENCRYPTION_KEY:?set SETTINGS_ENCRYPTION_KEY in .env}
+      STORAGE_ROOT: /app/storage
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-536870912}
+      NODE_ENV: production
+    volumes:
+      - storage:/app/storage
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+      args:
+        WHISPER_MODEL: ${WHISPER_MODEL:-small}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: *database_url
+      SETTINGS_ENCRYPTION_KEY: ${SETTINGS_ENCRYPTION_KEY:?set SETTINGS_ENCRYPTION_KEY in .env}
+      STORAGE_ROOT: /app/storage
+      WHISPER_MODEL: ${WHISPER_MODEL:-small}
+      TTS_TAKE_COUNT: ${TTS_TAKE_COUNT:-3}
+      NODE_ENV: production
+    volumes:
+      # The same volume the web service writes uploads into. See note 1 above.
+      - storage:/app/storage
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres-data:
+  storage:
