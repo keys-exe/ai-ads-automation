@@ -135,6 +135,17 @@ export const DEFAULT_ROUTES: Record<string, ArsenalModel> = {
   volume_broll: "nano_banana_2",
   // "Mechanism A–C: nano_banana_2 · nano_banana_pro only — classifier threshold."
   mechanism: "nano_banana_2",
-  property_plate: "nano_banana_pro",
-  location_plate: "nano_banana_pro",
+  // Plates carry no type and no face, so §18A's closest listed class is
+  // "Volume B-roll, no type → nano_banana_2" rather than any of the three
+  // classes it routes to nano_banana_pro (readable wordmark, candid face
+  // seeds, talking-head seeds).
+  //
+  // This also sidesteps §5's unresolved alias failure, reproduced on this
+  // pipeline's first real call: a job submitted as nano_banana_pro completed
+  // logging nano_banana_2 (job 4f176a90, 20 Sep 2026). Routing a plate to
+  // nano_banana_pro through the connector therefore fails verifyLoggedModel
+  // every time, burns its ALIAS_MISMATCH retry and queues for a human — for a
+  // beat class the standard never asked to be on pro.
+  property_plate: "nano_banana_2",
+  location_plate: "nano_banana_2",
 };

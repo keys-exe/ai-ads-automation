@@ -133,7 +133,8 @@ export const PropertyShell = z.object({
 
 export const PropertySheet = z.object({
   dwellingId: z.string(),
-  typeAndEra: z.string().describe("field 1 — what kind of house and roughly what decade, in one sentence"),
+  typeAndEra: z.string()
+    .describe("field 1 — a BARE NOUN PHRASE naming the kind of house and its decade, e.g. '1930s bay-fronted semi-detached'. Not a sentence and NOT ending in the word 'house': the locked PLATE-PROP string reads 'the hall of a [TYPE AND ERA] house' and already supplies it"),
   shell: PropertyShell,
   floorMap: z.string().describe("field 3 — which room adjoins which, where the stairs land, which way the front door faces"),
   orientation: z.array(z.object({ room: z.string(), windowsFace: z.string() }))
