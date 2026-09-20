@@ -4,6 +4,10 @@ Three processes and a database: Postgres, the web app, and the worker. The
 compose file brings all of it up; nothing here is host-specific, so it runs on
 a plain VM and is the base for Fly, Render or Railway.
 
+**Deploying to Railway?** See [`railway.md`](railway.md) — it has the
+service-by-service setup, and one Railway-specific constraint that forces
+object storage.
+
 ## Vercel will not run this
 
 Worth stating plainly, because the repo is a Next.js app and Vercel is the
